@@ -1220,10 +1220,25 @@
     const full = "/" + r.parts.join("/");
     out('<span class="muted">Opening </span><span class="html">' + esc(displayPath(r.parts)) + '</span><span class="muted"> in ' + (via || "the browser") + "…</span>");
     viewerUrl.innerHTML = '<b>file://</b>' + esc(full);
-    frame.srcdoc = r.node.content;
     viewer.classList.add("open");
+    renderIntoFrame(r.node.content);
   }
-  function closeViewer() { viewer.classList.remove("open"); frame.srcdoc = ""; focusInput(); }
+  // Write the page into a same-origin sandboxed about:blank iframe. This is the
+  // most CSP-robust path (the frame inherits the host page's origin and policy);
+  // srcdoc is kept as a fallback for engines that block the write.
+  function renderIntoFrame(html) {
+    try {
+      const doc = frame.contentDocument || (frame.contentWindow && frame.contentWindow.document);
+      if (doc) { doc.open(); doc.write(html); doc.close(); return; }
+    } catch (e) { /* fall through */ }
+    try { frame.srcdoc = html; } catch (e) { /* nothing else to do */ }
+  }
+  function closeViewer() {
+    viewer.classList.remove("open");
+    renderIntoFrame("<!doctype html><title></title>");
+    frame.removeAttribute("srcdoc");
+    focusInput();
+  }
   $("#viewer-close").addEventListener("click", closeViewer);
   viewer.addEventListener("click", (e) => { if (e.target === viewer) closeViewer(); });
 
