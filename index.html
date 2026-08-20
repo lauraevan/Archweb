@@ -1,0 +1,1668 @@
+<title>Arch Linux WebTTY</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="dark" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap"
+  rel="stylesheet"
+/>
+
+<style>
+  /*
+    Arch Linux WebTTY — a committed single-visual-world design (a real black TTY).
+    Everything is painted explicitly so it holds on any host ground; no theme toggle
+    by design, because the whole point is a full-black Arch console.
+  */
+  :root {
+    --bg: #000000;
+    --fg: #c9ccd1;          /* console foreground, a touch off pure white */
+    --fg-bright: #ffffff;   /* the white accent */
+    --arch: #1793d1;        /* fastfetch FF_COLOR_FG_CYAN — the iconic Arch blue */
+    --arch-dim: #0f6ea3;
+    --ok: #4e9a06;          /* systemd [  OK  ] green */
+    --ok-bright: #8ae234;
+    --fail: #cc0000;
+    --warn: #c4a000;
+    --muted: #6b7078;
+    --sel: #1793d1;
+
+    /* xterm 16-color palette for ls / fastfetch color blocks */
+    --c0: #000000; --c1: #cc0000; --c2: #4e9a06; --c3: #c4a000;
+    --c4: #3465a4; --c5: #75507b; --c6: #06989a; --c7: #d3d7cf;
+    --c8: #555753; --c9: #ef2929; --c10: #8ae234; --c11: #fce94f;
+    --c12: #729fcf; --c13: #ad7fa8; --c14: #34e2e2; --c15: #eeeeec;
+
+    --mono: "JetBrains Mono", "DejaVu Sans Mono", "Cascadia Mono", "Consolas",
+      "Menlo", ui-monospace, monospace;
+    --fs: 15px;
+    --lh: 1.35;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+  }
+
+  body {
+    font-family: var(--mono);
+    font-size: var(--fs);
+    line-height: var(--lh);
+    color: var(--fg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow: hidden;
+  }
+
+  /* The TTY screen fills the viewport, scrolls internally like a console. */
+  #screen {
+    position: fixed;
+    inset: 0;
+    padding: 10px 14px 22px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    white-space: pre-wrap;
+    word-break: break-word;
+    scrollbar-width: thin;
+    scrollbar-color: #2a2d31 transparent;
+    /* faint scanline-free CRT vignette; kept subtle so text stays crisp */
+    background:
+      radial-gradient(120% 120% at 50% 0%, rgba(23, 147, 209, 0.03), transparent 55%),
+      var(--bg);
+  }
+  #screen::-webkit-scrollbar { width: 10px; }
+  #screen::-webkit-scrollbar-thumb { background: #26292d; border-radius: 8px; }
+  #screen::-webkit-scrollbar-track { background: transparent; }
+
+  .line { white-space: pre-wrap; }
+
+  /* color utility classes mirroring ANSI console colors */
+  .fg-bright { color: var(--fg-bright); }
+  .arch { color: var(--arch); }
+  .arch-b { color: var(--arch); font-weight: 700; }
+  .ok { color: var(--ok-bright); }
+  .fail { color: var(--fail); }
+  .warn { color: var(--warn); }
+  .muted { color: var(--muted); }
+  .b { font-weight: 700; }
+  .dir { color: var(--c12); font-weight: 700; }
+  .exe { color: var(--c10); font-weight: 700; }
+  .lnk { color: var(--c14); font-weight: 700; }
+  .html { color: var(--c13); font-weight: 700; }
+  .red { color: var(--c9); }
+  .green { color: var(--c10); }
+  .yellow { color: var(--c11); }
+  .blue { color: var(--c12); }
+  .magenta { color: var(--c13); }
+  .cyan { color: var(--c14); }
+  .white { color: var(--c15); }
+
+  /* systemd status tag [  OK  ] */
+  .tag { color: var(--fg-bright); }
+
+  /* fastfetch layout */
+  .ff { display: flex; gap: 18px; align-items: flex-start; margin: 2px 0 6px; }
+  .ff-logo {
+    color: var(--arch);
+    font-weight: 700;
+    white-space: pre;
+    line-height: 1.15;
+    flex: 0 0 auto;
+  }
+  .ff-info { white-space: pre; line-height: 1.45; }
+  .ff-title { color: var(--arch); font-weight: 700; }
+  .ff-key { color: var(--arch); font-weight: 700; }
+  .ff-sep { color: var(--muted); }
+  .ff-blocks { display: flex; margin-top: 6px; }
+  .ff-blocks .blk { width: 1.35em; height: 1.05em; display: inline-block; }
+  @media (max-width: 640px) {
+    .ff { flex-direction: column; gap: 4px; }
+    .ff-logo { font-size: 8px; line-height: 1.05; }
+  }
+
+  /* active input line */
+  #cursor {
+    display: inline-block;
+    background: var(--fg);
+    color: var(--bg);
+    animation: blink 1s steps(1) infinite;
+  }
+  #cursor.hollow {
+    background: transparent;
+    color: var(--fg);
+    box-shadow: inset 0 0 0 1px var(--fg);
+    animation: none;
+  }
+  @keyframes blink { 50% { background: transparent; color: transparent; } }
+  @media (prefers-reduced-motion: reduce) {
+    #cursor { animation: none; }
+  }
+
+  a { color: var(--arch); }
+
+  /* progress bar cell used by pacman */
+  .pbar { color: var(--arch); }
+
+  /* hidden input to summon the mobile keyboard */
+  #kb {
+    position: fixed; opacity: 0; pointer-events: none;
+    left: -9999px; top: 0; width: 1px; height: 1px;
+  }
+
+  /* ---- HTML file viewer (a minimal "browser window") ---- */
+  #viewer {
+    position: fixed; inset: 0; z-index: 50; display: none;
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(2px);
+    padding: clamp(8px, 3vw, 40px);
+  }
+  #viewer.open { display: grid; place-items: center; }
+  .win {
+    width: min(1000px, 100%);
+    height: min(88vh, 820px);
+    display: flex; flex-direction: column;
+    background: #0c0d0f;
+    border: 1px solid #26292d;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(23,147,209,0.15);
+  }
+  .win-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px;
+    background: #131518;
+    border-bottom: 1px solid #26292d;
+    font-size: 13px;
+  }
+  .win-dots { display: flex; gap: 7px; }
+  .win-dots i {
+    width: 12px; height: 12px; border-radius: 50%; display: inline-block;
+  }
+  .d1 { background: #ff5f57; } .d2 { background: #febc2e; } .d3 { background: #28c840; }
+  .win-url {
+    flex: 1; min-width: 0;
+    color: #9aa0a6;
+    background: #0c0d0f;
+    border: 1px solid #26292d;
+    border-radius: 6px;
+    padding: 4px 10px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .win-url b { color: var(--arch); font-weight: 500; }
+  .win-close {
+    color: #cdd0d4; background: transparent; border: 0; cursor: pointer;
+    font: inherit; padding: 2px 8px; border-radius: 6px;
+  }
+  .win-close:hover { background: #26292d; color: #fff; }
+  .win iframe { flex: 1; width: 100%; border: 0; background: #fff; }
+
+  /* ---- nano-style editor ---- */
+  #editor { position: fixed; inset: 0; z-index: 60; display: none; flex-direction: column; background: var(--bg); }
+  #editor.open { display: flex; }
+  .ed-top {
+    background: var(--fg); color: var(--bg);
+    display: flex; justify-content: space-between; padding: 3px 10px; font-weight: 700;
+  }
+  #ed-area {
+    flex: 1; width: 100%; resize: none; border: 0; outline: 0;
+    background: var(--bg); color: var(--fg);
+    font-family: var(--mono); font-size: var(--fs); line-height: 1.4;
+    padding: 10px 14px;
+  }
+  .ed-status { text-align: center; color: var(--arch); min-height: 1.2em; padding: 1px 0; }
+  .ed-keys { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px 24px; padding: 4px 10px 8px; }
+  @media (min-width: 720px) { .ed-keys { grid-template-columns: repeat(4, 1fr); } }
+  .ed-keys span { white-space: nowrap; }
+  .ed-keys b { background: var(--fg); color: var(--bg); padding: 0 3px; font-weight: 700; }
+
+  .hint {
+    position: fixed; right: 12px; bottom: 8px; z-index: 5;
+    color: #3a3d42; font-size: 12px; pointer-events: none;
+    transition: opacity .4s;
+  }
+</style>
+
+<!-- ============================================================= -->
+<!-- Real HTML files that live in the virtual filesystem.          -->
+<!-- Stored as inert text so `cat` shows source and `open` renders -->
+<!-- them verbatim in the viewer iframe. CSS-only (CSP-safe).       -->
+<!-- ============================================================= -->
+
+<script type="text/html" id="page-welcome">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Welcome</title>
+<style>
+  :root { --arch:#1793d1; --ink:#0c1116; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+         color:var(--ink); background:
+         radial-gradient(1200px 500px at 80% -10%, #d7f0ff, transparent 60%),
+         linear-gradient(180deg,#f6fbff,#ffffff); min-height:100vh; }
+  .wrap { max-width:720px; margin:0 auto; padding:64px 28px 80px; }
+  .badge { display:inline-flex; align-items:center; gap:8px; font-weight:700; letter-spacing:.06em;
+           text-transform:uppercase; font-size:12px; color:var(--arch); }
+  .badge svg { width:22px; height:22px; }
+  h1 { font-size:clamp(30px,6vw,52px); line-height:1.05; margin:14px 0 8px; letter-spacing:-.02em; }
+  h1 span { color:var(--arch); }
+  p.lead { font-size:19px; line-height:1.6; color:#3a444d; margin:0 0 28px; }
+  .card { background:#fff; border:1px solid #e4edf3; border-radius:14px; padding:22px 24px; margin:14px 0;
+          box-shadow:0 10px 30px rgba(23,147,209,.06); }
+  .card h2 { margin:0 0 6px; font-size:16px; }
+  .card code { background:#eef6fb; color:#0c5a86; padding:2px 7px; border-radius:6px; font-size:14px; }
+  .grid { display:grid; gap:14px; grid-template-columns:1fr 1fr; }
+  @media (max-width:560px){ .grid{ grid-template-columns:1fr; } }
+  footer { margin-top:34px; color:#8a97a1; font-size:13px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="badge">
+      <svg viewBox="0 0 24 24" fill="#1793d1"><path d="M12 2 L2 21 h20 Z M12 7 l5.5 10.5 c-1.6-.9-3.4-1.6-5.5-1.6 s-3.9.7-5.5 1.6 Z"/></svg>
+      Arch Linux WebTTY
+    </div>
+    <h1>You just opened a <span>real HTML file</span>.</h1>
+    <p class="lead">This page was served straight out of the terminal's virtual
+      filesystem at <code>~/pages/welcome.html</code> and rendered by the browser —
+      exactly like <code>xdg-open</code> would on a real Arch box.</p>
+    <div class="grid">
+      <div class="card"><h2>Open a file</h2><p><code>open ~/pages/about.html</code> or
+        <code>xdg-open welcome.html</code></p></div>
+      <div class="card"><h2>Write your own</h2><p><code>nano hello.html</code>, save with
+        <code>^O</code>, then <code>open hello.html</code>.</p></div>
+      <div class="card"><h2>System info</h2><p>Run <code>fastfetch</code> for the real
+        Arch logo and specs.</p></div>
+      <div class="card"><h2>Explore</h2><p><code>ls</code>, <code>cd</code>,
+        <code>cat</code>, <code>pacman -Q</code>, <code>help</code>.</p></div>
+    </div>
+    <footer>Arch Linux — a lightweight and flexible Linux® distribution that tries to Keep It Simple.</footer>
+  </div>
+</body>
+</html>
+</script>
+
+<script type="text/html" id="page-about">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About Arch Linux</title>
+<style>
+  * { box-sizing:border-box; }
+  body { margin:0; background:#0d1117; color:#c9d1d9;
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  header { padding:56px 28px 40px; text-align:center;
+           background:radial-gradient(900px 380px at 50% -30%, rgba(23,147,209,.35), transparent 60%);
+           border-bottom:1px solid #21262d; }
+  header h1 { font-size:clamp(28px,5vw,44px); margin:12px 0 6px; letter-spacing:-.02em; }
+  header h1 b { color:#1793d1; }
+  header p { color:#8b949e; max-width:560px; margin:0 auto; line-height:1.6; }
+  main { max-width:760px; margin:0 auto; padding:34px 28px 70px; }
+  section { border-left:2px solid #1793d1; padding:2px 0 2px 20px; margin:26px 0; }
+  section h2 { margin:0 0 6px; font-size:17px; color:#e6edf3; }
+  section p { margin:0; line-height:1.7; color:#9fb0c0; }
+  .principles { display:grid; gap:12px; grid-template-columns:1fr 1fr; margin:28px 0; }
+  @media (max-width:560px){ .principles{ grid-template-columns:1fr; } }
+  .principles div { background:#161b22; border:1px solid #21262d; border-radius:12px; padding:16px 18px; }
+  .principles b { color:#1793d1; }
+  code { background:#161b22; border:1px solid #21262d; padding:1px 6px; border-radius:5px; color:#79c0ff; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>About <b>Arch Linux</b></h1>
+    <p>A general-purpose rolling-release distribution created in 2002, built around
+       simplicity, minimalism and user centrality.</p>
+  </header>
+  <main>
+    <div class="principles">
+      <div><b>Simplicity</b><br>No unnecessary additions or modifications. Ship software
+        as the developers intended.</div>
+      <div><b>Modernity</b><br>Rolling releases: the newest stable kernels, toolchains and
+        packages, always.</div>
+      <div><b>Pragmatism</b><br>Decisions made through debate, not ideology. Whatever works,
+        works.</div>
+      <div><b>User-centrality</b><br>Arch targets the competent user who is willing to read
+        the Wiki and build their system up.</div>
+    </div>
+    <section><h2>pacman</h2><p>The package manager that binds the system together. Install
+      with <code>pacman -S name</code>, upgrade the whole system with <code>pacman -Syu</code>.</p></section>
+    <section><h2>The Arch Way</h2><p>You assemble the system yourself from a minimal base,
+      so you understand and control every part of it.</p></section>
+    <section><h2>The AUR</h2><p>The Arch User Repository: a community-driven collection of
+      build scripts (PKGBUILDs) for tens of thousands more packages.</p></section>
+  </main>
+</body>
+</html>
+</script>
+
+<div id="screen" tabindex="0"></div>
+<input id="kb" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-hidden="true" />
+<div class="hint" id="hint"></div>
+
+<!-- HTML viewer -->
+<div id="viewer" role="dialog" aria-label="HTML viewer">
+  <div class="win">
+    <div class="win-bar">
+      <div class="win-dots"><i class="d1"></i><i class="d2"></i><i class="d3"></i></div>
+      <div class="win-url" id="viewer-url"></div>
+      <button class="win-close" id="viewer-close" aria-label="Close">✕ close</button>
+    </div>
+    <iframe id="viewer-frame" sandbox="allow-same-origin" title="page"></iframe>
+  </div>
+</div>
+
+<!-- nano editor -->
+<div id="editor">
+  <div class="ed-top"><span id="ed-title">GNU nano 8.1</span><span id="ed-file"></span><span>&nbsp;</span></div>
+  <textarea id="ed-area" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+  <div class="ed-status" id="ed-status"></div>
+  <div class="ed-keys">
+    <span><b>^O</b> Write Out</span><span><b>^X</b> Exit</span>
+    <span><b>^K</b> Cut Line</span><span><b>^W</b> Where Is</span>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ======================================================================
+  //  Exact fastfetch Arch logo (src/logo/ascii/a/arch.txt, dev branch).
+  //  $1 and $2 are the two color slots; the builtin table assigns both to
+  //  FF_COLOR_FG_CYAN, so the whole logo renders in the iconic Arch cyan.
+  // ======================================================================
+  const ARCH_LOGO = [
+    '                  -`',
+    '                 .o+`',
+    '                `ooo/',
+    '               `+oooo:',
+    '              `+oooooo:',
+    '              -+oooooo+:',
+    '            `/:-:++oooo+:',
+    '           `/++++/+++++++:',
+    '          `/++++++++++++++:',
+    '         `/+++o$2oooooooo$1oooo/`',
+    '        ./$2ooosssso++osssssso$1+`',
+    '$2       .oossssso-````/ossssss+`',
+    '      -osssssso.      :ssssssso.',
+    '     :osssssss/        osssso+++.',
+    '    /ossssssss/        +ssssooo/-',
+    '  `/ossssso+/:-        -:/+osssso+-',
+    ' `+sso+:-`                 `.-/+oso:',
+    '`++:.                           `-/+/',
+    '.`                                 `/'
+  ].join('\n');
+
+  // ---- small helpers ----------------------------------------------------
+  const $ = (s) => document.querySelector(s);
+  const screen = $("#screen");
+  const kb = $("#kb");
+  const esc = (s) =>
+    String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const pad = (s, n) => (s + " ".repeat(Math.max(0, n - s.length)));
+  const rint = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+
+  const HOST = "archlinux";
+  const USER = "arch";
+  const KVER = "6.10.6-arch1-1";
+  const BOOT_TS = Date.now();
+
+  // ======================================================================
+  //  Virtual filesystem
+  // ======================================================================
+  function dir(children) { return { type: "dir", children: children || {} }; }
+  function file(content, extra) { return Object.assign({ type: "file", content: content }, extra || {}); }
+  function htmlFile(srcId) {
+    const el = document.getElementById(srcId);
+    const src = el ? el.textContent.replace(/^\n/, "") : "<!doctype html><title>empty</title>";
+    return { type: "file", content: src, html: true };
+  }
+
+  const OS_RELEASE = [
+    'NAME="Arch Linux"',
+    'PRETTY_NAME="Arch Linux"',
+    'ID=arch',
+    'BUILD_ID=rolling',
+    'ANSI_COLOR="38;2;23;147;209"',
+    'HOME_URL="https://archlinux.org/"',
+    'DOCUMENTATION_URL="https://wiki.archlinux.org/"',
+    'SUPPORT_URL="https://bbs.archlinux.org/"',
+    'BUG_REPORT_URL="https://gitlab.archlinux.org/groups/archlinux/-/issues"',
+    'LOGO=archlinux-logo'
+  ].join("\n") + "\n";
+
+  const BASHRC = [
+    '#',
+    '# ~/.bashrc',
+    '#',
+    '',
+    '# If not running interactively, don\'t do anything',
+    '[[ $- != *i* ]] && return',
+    '',
+    'alias ls=\'ls --color=auto\'',
+    'alias grep=\'grep --color=auto\'',
+    'alias ll=\'ls -lah\'',
+    'alias ..=\'cd ..\'',
+    'PS1=\'[\\u@\\h \\W]\\$ \'',
+    '',
+    '# greet on login',
+    'fastfetch',
+    ''
+  ].join("\n");
+
+  const root = dir({
+    home: dir({
+      arch: dir({
+        "pages": dir({
+          "welcome.html": htmlFile("page-welcome"),
+          "about.html": htmlFile("page-about"),
+        }),
+        "Documents": dir({
+          "todo.txt": file("[ ] read the Arch Wiki, cover to cover\n[ ] rice the desktop\n[x] install Arch (btw)\n"),
+        }),
+        "Downloads": dir({}),
+        "Pictures": dir({}),
+        ".bashrc": file(BASHRC),
+        ".bash_history": file("fastfetch\npacman -Syu\nls\n"),
+        "readme.md": file(
+          "# Arch Linux WebTTY\n\n" +
+          "A faithful in-browser Arch console.\n\n" +
+          "Try:\n" +
+          "  fastfetch            real logo + specs\n" +
+          "  pacman -Syu          full system upgrade\n" +
+          "  open pages/welcome.html\n" +
+          "  nano hello.html      then: open hello.html\n" +
+          "  help                 list every command\n"
+        ),
+      }),
+    }),
+    etc: dir({
+      "os-release": file(OS_RELEASE),
+      "hostname": file(HOST + "\n"),
+      "shells": file("/bin/sh\n/bin/bash\n/usr/bin/bash\n/bin/zsh\n"),
+      "pacman.conf": file(
+        "[options]\nHoldPkg     = pacman glibc\nArchitecture = auto\nColor\nParallelDownloads = 5\n\n" +
+        "[core]\nInclude = /etc/pacman.d/mirrorlist\n\n" +
+        "[extra]\nInclude = /etc/pacman.d/mirrorlist\n"
+      ),
+    }),
+    usr: dir({ bin: dir({}), share: dir({}), lib: dir({}) }),
+    var: dir({ log: dir({}), cache: dir({}) }),
+    proc: dir({}),
+    tmp: dir({}),
+    root: dir({}),
+  });
+
+  let cwd = ["home", "arch"];
+
+  // resolve an array/string path to a node; returns {node,parent,name,path} or null
+  function pathParts(p) {
+    let parts;
+    if (p === "~") parts = ("/home/" + USER).split("/");
+    else if (p.startsWith("~/")) parts = ("/home/" + USER + "/" + p.slice(2)).split("/");
+    else if (p.startsWith("/")) parts = p.split("/");
+    else parts = ("/" + cwd.join("/") + "/" + p).split("/");
+    const out = [];
+    for (const seg of parts) {
+      if (seg === "" || seg === ".") continue;
+      if (seg === "..") out.pop();
+      else out.push(seg);
+    }
+    return out;
+  }
+  function nodeAt(parts) {
+    let node = root;
+    for (const seg of parts) {
+      if (!node || node.type !== "dir" || !node.children[seg]) return null;
+      node = node.children[seg];
+    }
+    return node;
+  }
+  function resolve(p) {
+    const parts = pathParts(p);
+    return { node: nodeAt(parts), parts };
+  }
+  function parentOf(parts) {
+    return nodeAt(parts.slice(0, -1));
+  }
+  function displayPath(parts) {
+    const home = ["home", USER];
+    if (parts.length >= 2 && parts[0] === "home" && parts[1] === USER) {
+      const rest = parts.slice(2);
+      return "~" + (rest.length ? "/" + rest.join("/") : "");
+    }
+    return "/" + parts.join("/");
+  }
+
+  // ======================================================================
+  //  Output primitives
+  // ======================================================================
+  let inputLine = null; // active prompt element
+
+  function scrollDown() { screen.scrollTop = screen.scrollHeight; }
+
+  function out(html) {
+    const div = document.createElement("div");
+    div.className = "line";
+    div.innerHTML = html;
+    // insert before the active input line if present
+    if (inputLine && inputLine.parentNode === screen) screen.insertBefore(div, inputLine);
+    else screen.appendChild(div);
+    scrollDown();
+    return div;
+  }
+  function outText(t) { out(esc(t == null ? "" : t)); }
+  function outLines(arr) { for (const l of arr) outText(l); }
+
+  // ======================================================================
+  //  fastfetch
+  // ======================================================================
+  function upSince() {
+    const secs = Math.floor((Date.now() - BOOT_TS) / 1000) + 41 * 60; // seed a plausible uptime
+    const d = Math.floor(secs / 86400);
+    const h = Math.floor((secs % 86400) / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const parts = [];
+    if (d) parts.push(d + " day" + (d > 1 ? "s" : ""));
+    if (h) parts.push(h + " hour" + (h > 1 ? "s" : ""));
+    parts.push(m + " min" + (m !== 1 ? "s" : ""));
+    return parts.join(", ");
+  }
+
+  function renderLogo() {
+    // Replace $1/$2 color slots. Both map to cyan (Arch blue); rendered identically
+    // to match fastfetch's default builtin color table for "arch".
+    let lines = ARCH_LOGO.split("\n").map((l) => esc(l));
+    // strip the $1/$2 markers (they only matter when the two slots differ)
+    return lines.map((l) => l.replace(/\$[12]/g, "")).join("\n");
+  }
+
+  function packageCount() { return 913; }
+
+  function fastfetch() {
+    const info = [
+      ["title", USER + "@" + HOST],
+      ["rule", ""],
+      ["OS", "Arch Linux x86_64"],
+      ["Host", "B550 AORUS ELITE V2"],
+      ["Kernel", "Linux " + KVER],
+      ["Uptime", upSince()],
+      ["Packages", packageCount() + " (pacman)"],
+      ["Shell", "bash 5.2.26"],
+      ["Display", "1920x1080 @ 165 Hz (as 1536x864)"],
+      ["WM", "Hyprland (Wayland)"],
+      ["Theme", "Adwaita-dark [GTK2/3]"],
+      ["Icons", "Papirus-Dark [GTK2/3]"],
+      ["Terminal", "foot 1.18.1"],
+      ["CPU", "AMD Ryzen 7 5800X (16) @ 4.85 GHz"],
+      ["GPU", "AMD Radeon RX 6700 XT"],
+      ["Memory", "3.21 GiB / 15.55 GiB (21%)"],
+      ["Swap", "0 B / 8.00 GiB (0%)"],
+      ["Disk (/)", "38.4 GiB / 476.44 GiB (8%) - ext4"],
+      ["Local IP", "192.168.1.42/24 (enp5s0)"],
+      ["Locale", "en_US.UTF-8"],
+    ];
+    const title = USER + "@" + HOST;
+    const infoHtml = info
+      .map(([k, v]) => {
+        if (k === "title") return '<span class="ff-title">' + esc(v) + "</span>";
+        if (k === "rule") return '<span class="ff-sep">' + "-".repeat(title.length) + "</span>";
+        return '<span class="ff-key">' + esc(k) + '</span><span class="ff-sep">: </span>' + esc(v);
+      })
+      .join("\n");
+
+    // two rows of color blocks like real fastfetch
+    let row1 = "", row2 = "";
+    for (let i = 0; i < 8; i++) row1 += '<span class="blk" style="background:var(--c' + i + ')"></span>';
+    for (let i = 8; i < 16; i++) row2 += '<span class="blk" style="background:var(--c' + i + ')"></span>';
+
+    const html =
+      '<div class="ff">' +
+      '<div class="ff-logo">' + renderLogo() + "</div>" +
+      '<div class="ff-info">' + infoHtml +
+      '\n<div class="ff-blocks">' + row1 + "</div>" +
+      '<div class="ff-blocks">' + row2 + "</div>" +
+      "</div></div>";
+    out(html);
+  }
+
+  // ======================================================================
+  //  Commands
+  // ======================================================================
+  const HISTORY = ["fastfetch", "pacman -Syu", "ls"];
+  let histIdx = HISTORY.length;
+
+  function classify(name, node) {
+    if (node.type === "dir") return "dir";
+    if (node.html || name.endsWith(".html") || name.endsWith(".htm")) return "html";
+    if (name.endsWith(".sh") || node.exe) return "exe";
+    return "";
+  }
+  function colorName(name, node) {
+    const c = classify(name, node);
+    const label = node.type === "dir" ? esc(name) : esc(name);
+    return c ? '<span class="' + c + '">' + label + "</span>" : esc(name);
+  }
+
+  const commands = {
+    help() {
+      out('<span class="arch-b">Arch Linux WebTTY</span> — this is a real shell. Available commands:');
+      const groups = [
+        ["system", "fastfetch neofetch uname hostname hostnamectl uptime free df lsblk lscpu whoami id date"],
+        ["packages", "pacman"],
+        ["files", "ls cd pwd cat mkdir touch rm mv cp tree head echo find stat"],
+        ["editor / web", "nano vim open xdg-open firefox"],
+        ["shell", "clear history alias env which man sudo su reboot poweroff exit help"],
+      ];
+      for (const [g, cmds] of groups)
+        out('  <span class="ff-key">' + pad(g, 14) + "</span>" + esc(cmds));
+      out("");
+      out('<span class="muted">Tip: open ~/pages/welcome.html · write a file with `nano`, then `open` it · Tab completes.</span>');
+    },
+
+    fastfetch() { fastfetch(); },
+    neofetch() { fastfetch(); },
+
+    clear() { screen.innerHTML = ""; if (inputLine) screen.appendChild(inputLine); },
+
+    pwd() { outText("/" + cwd.join("/")); },
+
+    whoami() { outText(USER); },
+    id() { outText("uid=1000(" + USER + ") gid=1000(" + USER + ") groups=1000(" + USER + "),998(wheel),3(sys),90(network),98(power)"); },
+    hostname() { outText(HOST); },
+    hostnamectl() {
+      outLines([
+        "   Static hostname: " + HOST,
+        "         Icon name: computer-desktop",
+        "           Chassis: desktop 🖥️",
+        "        Machine ID: 4f9a1c8e2b7d4a6f9e3c1b8a0d5f2e7c",
+        "           Boot ID: a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "  Operating System: Arch Linux",
+        "            Kernel: Linux " + KVER,
+        "      Architecture: x86-64",
+      ]);
+    },
+
+    date() { outText(new Date().toString().replace(/ \(.*\)$/, "")); },
+    uptime() {
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, "0");
+      const mm = String(now.getMinutes()).padStart(2, "0");
+      outText(" " + hh + ":" + mm + ":00 up " + upSince() + ",  1 user,  load average: 0.18, 0.24, 0.21");
+    },
+
+    uname(args) {
+      if (args.includes("-a"))
+        outText("Linux " + HOST + " " + KVER + " #1 SMP PREEMPT_DYNAMIC Sun, 18 Aug 2026 12:00:00 +0000 x86_64 GNU/Linux");
+      else if (args.includes("-r")) outText(KVER);
+      else if (args.includes("-m")) outText("x86_64");
+      else outText("Linux");
+    },
+
+    echo(args, raw) {
+      // support $HOME/$USER/$PWD expansion, keep it simple
+      let s = raw.replace(/^echo\s?/, "");
+      s = s.replace(/\$USER/g, USER).replace(/\$HOME/g, "/home/" + USER)
+           .replace(/\$HOSTNAME/g, HOST).replace(/\$PWD/g, "/" + cwd.join("/"))
+           .replace(/^["']|["']$/g, "");
+      outText(s);
+    },
+
+    env() {
+      outLines([
+        "SHELL=/bin/bash", "USER=" + USER, "HOME=/home/" + USER, "HOSTNAME=" + HOST,
+        "PWD=/" + cwd.join("/"), "LANG=en_US.UTF-8", "TERM=foot",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/bin", "EDITOR=nano",
+        "XDG_SESSION_TYPE=wayland", "WAYLAND_DISPLAY=wayland-1",
+      ]);
+    },
+    which(args) {
+      const known = { pacman: "/usr/bin/pacman", ls: "/usr/bin/ls", bash: "/usr/bin/bash",
+        nano: "/usr/bin/nano", vim: "/usr/bin/vim", fastfetch: "/usr/bin/fastfetch",
+        firefox: "/usr/bin/firefox", cat: "/usr/bin/cat", git: "/usr/bin/git" };
+      for (const a of args) {
+        if (known[a]) outText(known[a]);
+        else outText("which: no " + a + " in (/usr/local/sbin:/usr/local/bin:/usr/bin)");
+      }
+    },
+
+    free(args) {
+      const h = args.includes("-h");
+      if (h) {
+        outText("               total        used        free      shared  buff/cache   available");
+        outText("Mem:            15Gi       3.2Gi       9.1Gi       412Mi       3.3Gi        12Gi");
+        outText("Swap:          8.0Gi          0B       8.0Gi");
+      } else {
+        outText("               total        used        free      shared  buff/cache   available");
+        outText("Mem:        16299184     3363248     9556320      421888     3379616    12523456");
+        outText("Swap:        8388604           0     8388604");
+      }
+    },
+
+    df(args) {
+      outText("Filesystem      Size  Used Avail Use% Mounted on");
+      outText("dev             7.8G     0  7.8G   0% /dev");
+      outText("/dev/nvme0n1p2  477G   39G  414G   9% /");
+      outText("/dev/nvme0n1p1  1.0G  144M  880M  15% /boot");
+      outText("tmpfs           7.8G   18M  7.8G   1% /tmp");
+    },
+
+    lsblk() {
+      outLines([
+        "NAME        MAJ:MIN RM   SIZE RO TYPE MOUNTPOINTS",
+        "nvme0n1     259:0    0 476.9G  0 disk",
+        "├─nvme0n1p1 259:1    0     1G  0 part /boot",
+        "└─nvme0n1p2 259:2    0 475.9G  0 part /",
+      ]);
+    },
+
+    lscpu() {
+      outLines([
+        "Architecture:            x86_64",
+        "  CPU op-mode(s):        32-bit, 64-bit",
+        "  Address sizes:         48 bits physical, 48 bits virtual",
+        "  Byte Order:            Little Endian",
+        "CPU(s):                  16",
+        "Vendor ID:               AuthenticAMD",
+        "  Model name:            AMD Ryzen 7 5800X 8-Core Processor",
+        "    CPU family:          25",
+        "    Thread(s) per core:  2",
+        "    Core(s) per socket:  8",
+        "    CPU max MHz:         4850.1948",
+        "    CPU min MHz:         2200.0000",
+      ]);
+    },
+
+    ls(args) {
+      const flags = args.filter((a) => a.startsWith("-")).join("");
+      const targets = args.filter((a) => !a.startsWith("-"));
+      const showAll = flags.includes("a");
+      const long = flags.includes("l");
+      const target = targets[0] || ".";
+      const r = resolve(target);
+      if (!r.node) { outText("ls: cannot access '" + target + "': No such file or directory"); return; }
+      if (r.node.type === "file") { outText(target); return; }
+      let names = Object.keys(r.node.children).sort();
+      if (showAll) names = [".", "..", ...names];
+      if (!showAll) names = names.filter((n) => !n.startsWith("."));
+      if (!names.length) return;
+      if (long) {
+        outText("total " + (names.length * 4));
+        for (const n of names) {
+          const node = n === "." || n === ".." ? { type: "dir", children: {} } : r.node.children[n];
+          const isDir = node.type === "dir";
+          const perm = isDir ? "drwxr-xr-x" : (node.exe ? "-rwxr-xr-x" : "-rw-r--r--");
+          const size = isDir ? 4096 : (node.content ? node.content.length : 0);
+          const date = "Aug 20 09:2" + rint(0, 9);
+          out(
+            pad(perm, 11) + pad(String(isDir ? 2 : 1), 3) +
+            pad(USER, 6) + pad(USER, 6) + pad(String(size), 7) + " " +
+            date + " " + colorName(n, node)
+          );
+        }
+      } else {
+        out(names.map((n) => {
+          const node = n === "." || n === ".." ? { type: "dir" } : r.node.children[n];
+          return colorName(n, node);
+        }).join("   "));
+      }
+    },
+
+    tree(args) {
+      const start = args[0] || ".";
+      const r = resolve(start);
+      if (!r.node || r.node.type !== "dir") { outText("tree: " + start + ": Not a directory"); return; }
+      out('<span class="dir">' + esc(start) + "</span>");
+      let dirs = 0, files = 0;
+      function walk(node, prefix) {
+        const names = Object.keys(node.children).filter((n) => !n.startsWith(".")).sort();
+        names.forEach((n, i) => {
+          const child = node.children[n];
+          const last = i === names.length - 1;
+          out(prefix + (last ? "└── " : "├── ") + colorName(n, child));
+          if (child.type === "dir") { dirs++; walk(child, prefix + (last ? "    " : "│   ")); }
+          else files++;
+        });
+      }
+      walk(r.node, "");
+      out("");
+      outText(dirs + " directories, " + files + " files");
+    },
+
+    cd(args) {
+      const t = args[0] || "~";
+      const r = resolve(t);
+      if (!r.node) { outText("cd: " + t + ": No such file or directory"); return; }
+      if (r.node.type !== "dir") { outText("cd: " + t + ": Not a directory"); return; }
+      cwd = r.parts;
+    },
+
+    cat(args) {
+      if (!args.length) { outText("cat: missing operand"); return; }
+      for (const a of args) {
+        const r = resolve(a);
+        if (!r.node) { outText("cat: " + a + ": No such file or directory"); continue; }
+        if (r.node.type === "dir") { outText("cat: " + a + ": Is a directory"); continue; }
+        const content = r.node.content || "";
+        content.split("\n").forEach((l, i, arr) => {
+          if (i === arr.length - 1 && l === "") return;
+          outText(l);
+        });
+      }
+    },
+
+    head(args) {
+      const file = args.filter((a) => !a.startsWith("-"))[0];
+      const r = resolve(file || "");
+      if (!r.node || r.node.type !== "file") { outText("head: cannot open '" + file + "'"); return; }
+      r.node.content.split("\n").slice(0, 10).forEach((l) => outText(l));
+    },
+
+    stat(args) {
+      const a = args[0];
+      const r = resolve(a || "");
+      if (!r.node) { outText("stat: cannot statx '" + a + "': No such file or directory"); return; }
+      const isDir = r.node.type === "dir";
+      outText("  File: " + a);
+      outText("  Size: " + (isDir ? 4096 : (r.node.content || "").length) +
+        "        Blocks: 8          IO Block: 4096   " + (isDir ? "directory" : "regular file"));
+      outText("Access: (" + (isDir ? "0755/drwxr-xr-x" : "0644/-rw-r--r--") + ")  Uid: ( 1000/" + USER + ")   Gid: ( 1000/" + USER + ")");
+    },
+
+    mkdir(args) {
+      for (const a of args) {
+        if (a.startsWith("-")) continue;
+        const parts = pathParts(a);
+        const parent = parentOf(parts);
+        const name = parts[parts.length - 1];
+        if (!parent || parent.type !== "dir") { outText("mkdir: cannot create directory '" + a + "': No such file or directory"); continue; }
+        if (parent.children[name]) { outText("mkdir: cannot create directory '" + a + "': File exists"); continue; }
+        parent.children[name] = dir({});
+      }
+    },
+
+    touch(args) {
+      for (const a of args) {
+        const parts = pathParts(a);
+        const parent = parentOf(parts);
+        const name = parts[parts.length - 1];
+        if (!parent || parent.type !== "dir") { outText("touch: cannot touch '" + a + "': No such file or directory"); continue; }
+        if (!parent.children[name]) parent.children[name] = file("");
+      }
+    },
+
+    rm(args) {
+      const recursive = args.some((a) => /^-.*r/.test(a));
+      for (const a of args) {
+        if (a.startsWith("-")) continue;
+        const parts = pathParts(a);
+        const parent = parentOf(parts);
+        const name = parts[parts.length - 1];
+        if (!parent || !parent.children[name]) { outText("rm: cannot remove '" + a + "': No such file or directory"); continue; }
+        if (parent.children[name].type === "dir" && !recursive) { outText("rm: cannot remove '" + a + "': Is a directory"); continue; }
+        delete parent.children[name];
+      }
+    },
+
+    cp(args) { moveOrCopy(args, "cp"); },
+    mv(args) { moveOrCopy(args, "mv"); },
+
+    find(args) {
+      const start = args[0] && !args[0].startsWith("-") ? args[0] : ".";
+      const r = resolve(start);
+      if (!r.node) { outText("find: '" + start + "': No such file or directory"); return; }
+      const base = start === "." ? "." : start;
+      function walk(node, path) {
+        outText(path);
+        if (node.type === "dir")
+          for (const n of Object.keys(node.children).sort())
+            walk(node.children[n], path + "/" + n);
+      }
+      walk(r.node, base);
+    },
+
+    history() {
+      HISTORY.forEach((h, i) => outText(pad("  " + (i + 1), 6) + "  " + h));
+    },
+
+    alias() {
+      outLines([
+        "alias ..='cd ..'",
+        "alias grep='grep --color=auto'",
+        "alias ll='ls -lah'",
+        "alias ls='ls --color=auto'",
+      ]);
+    },
+
+    man(args) {
+      const p = args[0] || "";
+      if (!p) { outText("What manual page do you want?"); return; }
+      out('<span class="b">' + esc(p.toUpperCase()) + "(1)" + '</span>' + " ".repeat(20) +
+          "General Commands Manual" + " ".repeat(20) + '<span class="b">' + esc(p.toUpperCase()) + "(1)</span>");
+      out("");
+      out('<span class="b">NAME</span>');
+      outText("       " + p + " — see the Arch Wiki at https://wiki.archlinux.org/title/" + encodeURIComponent(p));
+      out("");
+      out('<span class="b">DESCRIPTION</span>');
+      outText("       This is a WebTTY. Full man pages aren't shipped, but every real Arch");
+      outText("       command's behaviour lives on the Wiki. Press q to quit (already did).");
+    },
+
+    sudo(args, raw) {
+      if (!args.length) { outText("usage: sudo command"); return; }
+      const rest = raw.replace(/^sudo\s+/, "");
+      out('<span class="muted">[sudo] password for ' + USER + ": </span>");
+      // just run the wrapped command
+      return runLine(rest, true);
+    },
+    su() { outText("su: Authentication is handled by the WebTTY — you are already " + USER + "."); },
+
+    systemctl(args) {
+      const sub = args[0];
+      if (sub === "status" || !sub) {
+        outLines([
+          "● " + HOST,
+          "    State: running",
+          "    Units: 341 loaded (incl. loaded aliases)",
+          "     Jobs: 0 queued",
+          "   Failed: 0 units",
+          "    Since: Sun 2026-08-20 08:41:12 UTC; 41min ago",
+        ]);
+      } else if (sub === "list-units" || sub === "list-unit-files") {
+        outLines([
+          "UNIT                      LOAD   ACTIVE SUB     DESCRIPTION",
+          "systemd-journald.service  loaded active running Journal Service",
+          "NetworkManager.service    loaded active running Network Manager",
+          "sshd.service              loaded active running OpenSSH Daemon",
+          "dbus.service              loaded active running D-Bus System Message Bus",
+        ]);
+      } else {
+        outText("");
+      }
+    },
+
+    reboot() { rebootSeq(); },
+    poweroff() { poweroffSeq(); },
+    exit() { poweroffSeq(); },
+
+    nano(args) { openEditor(args[0]); },
+    vim(args) { openEditor(args[0], true); },
+
+    open(args) { openTarget(args[0]); },
+    "xdg-open"(args) { openTarget(args[0]); },
+    firefox(args) { openTarget(args[0], "firefox"); },
+    chromium(args) { openTarget(args[0], "chromium"); },
+  };
+
+  function moveOrCopy(args, kind) {
+    const files = args.filter((a) => !a.startsWith("-"));
+    if (files.length < 2) { outText(kind + ": missing destination file operand"); return; }
+    const dest = files.pop();
+    for (const src of files) {
+      const sr = resolve(src);
+      if (!sr.node) { outText(kind + ": cannot stat '" + src + "': No such file or directory"); continue; }
+      const dparts = pathParts(dest);
+      let dparent = parentOf(dparts);
+      let dname = dparts[dparts.length - 1];
+      const dr = resolve(dest);
+      if (dr.node && dr.node.type === "dir") { dparent = dr.node; dname = sr.parts[sr.parts.length - 1]; }
+      if (!dparent) { outText(kind + ": cannot create '" + dest + "'"); continue; }
+      dparent.children[dname] = JSON.parse(JSON.stringify(sr.node));
+      if (kind === "mv") {
+        const sp = parentOf(sr.parts);
+        delete sp.children[sr.parts[sr.parts.length - 1]];
+      }
+    }
+  }
+
+  // ======================================================================
+  //  pacman (async, with progress bars)
+  // ======================================================================
+  const REPO = {
+    "neovim": ["0.10.1-2", "extra", "32.4 MiB", "An hyperextensible Vim-based text editor"],
+    "firefox": ["130.0-1", "extra", "228.7 MiB", "Standalone web browser from mozilla.org"],
+    "git": ["2.46.0-1", "extra", "28.9 MiB", "the fast distributed version control system"],
+    "htop": ["3.3.0-1", "extra", "0.3 MiB", "Interactive process viewer"],
+    "cowsay": ["3.8.4-1", "extra", "0.1 MiB", "Configurable talking characters in ASCII art"],
+    "hyprland": ["0.42.0-1", "extra", "12.1 MiB", "a highly customizable dynamic tiling Wayland compositor"],
+    "python": ["3.12.5-1", "core", "88.3 MiB", "The high-level programming language"],
+    "docker": ["1:27.2.0-1", "extra", "134.0 MiB", "Pack, ship and run any application as a lightweight container"],
+    "vlc": ["3.0.21-4", "extra", "94.2 MiB", "Multi-platform MPEG, VCD/DVD, and DivX player"],
+  };
+
+  async function pacman(args) {
+    const op = args.find((a) => a.startsWith("-")) || "";
+    const targets = args.filter((a) => !a.startsWith("-"));
+
+    if (op === "-V" || op === "--version") {
+      outLines([
+        "                       .--.                  Pacman v6.1.0 - libalpm v14.0.0",
+        "                      / _.-' .-.  .-.  .-.    Copyright (C) 2006-2024 Pacman Development Team",
+        "                      \\  '-. '-'  '-'  '-'    Copyright (C) 2002-2006 Judd Vinet",
+        "                       '--'",
+        "                                              This program may be freely redistributed under",
+        "                                              the terms of the GNU General Public License.",
+      ]);
+      return;
+    }
+
+    if (op.startsWith("-Q")) {
+      // list installed
+      const installed = [
+        ["base", "3-2"], ["linux", KVER.replace("-arch1-1", ".arch1-1")], ["linux-firmware", "20240811.717d4a1e-1"],
+        ["systemd", "256.5-1"], ["bash", "5.2.026-2"], ["pacman", "6.1.0-7"], ["coreutils", "9.5-1"],
+        ["glibc", "2.40-1"], ["gcc", "14.2.1-1"], ["mesa", "1:24.2.1-1"], ["hyprland", "0.42.0-1"],
+        ["foot", "1.18.1-1"], ["fastfetch", "2.21.3-1"], ["neovim", "0.10.1-2"], ["firefox", "130.0-1"],
+        ["git", "2.46.0-1"], ["nano", "8.1-1"], ["openssh", "9.8p1-1"], ["networkmanager", "1.48.10-1"],
+      ];
+      if (op === "-Qi" && targets[0]) {
+        const p = targets[0];
+        const meta = REPO[p] || ["1.0.0-1", "extra", "1.0 MiB", "A package"];
+        outLines([
+          "Name            : " + p,
+          "Version         : " + meta[0],
+          "Description     : " + meta[3],
+          "Architecture    : x86_64",
+          "URL             : https://archlinux.org/packages/" + meta[1] + "/x86_64/" + p + "/",
+          "Licenses        : GPL",
+          "Repository      : " + meta[1],
+          "Installed Size  : " + meta[2],
+          "Install Date    : Sun 20 Aug 2026 08:40:00 AM UTC",
+          "Install Reason  : Explicitly installed",
+        ]);
+        return;
+      }
+      installed.forEach(([n, v]) => out('<span class="white">' + esc(n) + "</span> " + '<span class="green">' + esc(v) + "</span>"));
+      out("");
+      outText(installed.length + " packages (showing a sample of " + packageCount() + " total)");
+      return;
+    }
+
+    if (op.startsWith("-Ss") || op === "-Ss") {
+      const q = targets[0] || "";
+      const hits = Object.keys(REPO).filter((k) => k.includes(q) || REPO[k][3].toLowerCase().includes(q));
+      if (!hits.length) { outText("error: no results found for '" + q + "'"); return; }
+      for (const k of hits) {
+        const m = REPO[k];
+        out('<span class="magenta">' + m[1] + "/</span><span class=\"white b\">" + k + "</span> <span class=\"green\">" + m[0] + "</span>");
+        outText("    " + m[3]);
+      }
+      return;
+    }
+
+    if (op.startsWith("-Si") && targets[0]) {
+      const p = targets[0], m = REPO[p];
+      if (!m) { outText("error: package '" + p + "' was not found"); return; }
+      outLines([
+        "Repository      : " + m[1],
+        "Name            : " + p,
+        "Version         : " + m[0],
+        "Description     : " + m[3],
+        "Architecture    : x86_64",
+        "Download Size   : " + m[2],
+      ]);
+      return;
+    }
+
+    // -S / -Syu install & upgrade
+    if (op.startsWith("-S")) {
+      const sync = op.includes("y");
+      const upgrade = op.includes("u");
+      inputEnabled = false;
+      try {
+        if (sync) {
+          for (const repo of ["core", "extra", "multilib"]) {
+            out('<span class="green b">:: </span><span class="b">Synchronizing package databases...</span>');
+            await progress(repo, rint(120, 260) + ".0 KiB", rint(200, 600));
+          }
+        }
+        if (upgrade) {
+          out('<span class="green b">:: </span><span class="b">Starting full system upgrade...</span>');
+          const pkgs = [["linux", KVER], ["mesa", "1:24.2.2-1"], ["systemd", "256.6-1"], ["firefox", "130.0.1-1"]];
+          await installPkgs(pkgs.map((p) => p[0]), "upgrade");
+          return;
+        }
+        if (targets.length) {
+          const unknown = targets.filter((t) => !REPO[t]);
+          if (unknown.length) { outText("error: target not found: " + unknown[0]); inputEnabled = true; return; }
+          await installPkgs(targets, "install");
+          return;
+        }
+        outText("error: no targets specified (use -h for help)");
+      } finally {
+        inputEnabled = true;
+      }
+      return;
+    }
+
+    outText("error: no operation specified (use -h for help)");
+  }
+
+  function bar(frac, width) {
+    const full = Math.round(frac * width);
+    return "[" + "#".repeat(full) + "-".repeat(width - full) + "]";
+  }
+
+  async function progress(label, size, dur) {
+    const line = out("");
+    const width = 38;
+    const steps = reduceMotion ? 1 : 24;
+    for (let i = 0; i <= steps; i++) {
+      const frac = i / steps;
+      const pct = Math.round(frac * 100);
+      line.innerHTML =
+        '<span class="white">' + pad(label, 22) + "</span>" + pad(size, 10) +
+        ' <span class="pbar">' + bar(frac, width) + "</span> " + pad(pct + "%", 5);
+      scrollDown();
+      if (!reduceMotion) await sleep(dur / steps);
+    }
+  }
+
+  async function installPkgs(names, mode) {
+    const metas = names.map((n) => [n, REPO[n] || ["1.0.0-1", "extra", rint(1, 40) + "." + rint(0, 9) + " MiB", "A package"]]);
+    out("");
+    out('<span class="b">Packages (' + metas.length + ")</span>  " + metas.map((m) => m[0] + "-" + m[1][0]).join("  "));
+    out("");
+    const totalDl = (metas.reduce((s, m) => s + parseFloat(m[1][2]), 0)).toFixed(2);
+    outText("Total Download Size:   " + totalDl + " MiB");
+    outText("Total Installed Size:  " + (totalDl * 3.4).toFixed(2) + " MiB");
+    out("");
+    out('<span class="green b">:: </span>Proceed with installation? [Y/n] ');
+    if (!reduceMotion) await sleep(360);
+    out('<span class="green b">:: </span><span class="b">Retrieving packages...</span>');
+    for (const [n, m] of metas) await progress(n + "-" + m[0], m[2], rint(240, 520));
+    out('<span class="green b">:: </span><span class="b">Checking keyring...</span>');
+    out('<span class="green b">:: </span><span class="b">Processing package changes...</span>');
+    const verbs = mode === "upgrade" ? "upgrading" : "installing";
+    let i = 0;
+    for (const [n, m] of metas) {
+      i++;
+      out('(' + i + '/' + metas.length + ') <span class="green">' + verbs + " " + n + "...</span>");
+    }
+    out('<span class="green b">:: </span><span class="b">Running post-transaction hooks...</span>');
+    outLines([
+      "(1/3) Reloading system manager configuration...",
+      "(2/3) Arming ConditionNeedsUpdate...",
+      "(3/3) Updating the desktop file MIME type cache...",
+    ]);
+    // actually make requested packages "runnable"/installed feel real: nothing else needed
+  }
+
+  // ======================================================================
+  //  HTML viewer + editor
+  // ======================================================================
+  const viewer = $("#viewer");
+  const frame = $("#viewer-frame");
+  const viewerUrl = $("#viewer-url");
+
+  function openTarget(arg, via) {
+    if (!arg) { outText((via || "xdg-open") + ": no file specified"); return; }
+    // allow opening real external urls-ish? keep local files only for authenticity
+    const r = resolve(arg);
+    if (!r.node) { outText((via || "xdg-open") + ": " + arg + ": No such file or directory"); return; }
+    if (r.node.type === "dir") { outText((via || "xdg-open") + ": " + arg + ": Is a directory"); return; }
+    const isHtml = r.node.html || /\.html?$/.test(arg);
+    if (!isHtml) {
+      outText((via || "xdg-open") + ": opening non-HTML files isn't supported here — try `cat " + arg + "` or `nano " + arg + "`.");
+      return;
+    }
+    const full = "/" + r.parts.join("/");
+    out('<span class="muted">Opening </span><span class="html">' + esc(displayPath(r.parts)) + '</span><span class="muted"> in ' + (via || "the browser") + "…</span>");
+    viewerUrl.innerHTML = '<b>file://</b>' + esc(full);
+    frame.srcdoc = r.node.content;
+    viewer.classList.add("open");
+  }
+  function closeViewer() { viewer.classList.remove("open"); frame.srcdoc = ""; focusInput(); }
+  $("#viewer-close").addEventListener("click", closeViewer);
+  viewer.addEventListener("click", (e) => { if (e.target === viewer) closeViewer(); });
+
+  // ---- nano-style editor ----
+  const editor = $("#editor");
+  const edArea = $("#ed-area");
+  const edStatus = $("#ed-status");
+  const edFile = $("#ed-file");
+  const edTitle = $("#ed-title");
+  let edCtx = null; // { name, parts, isNew }
+
+  function openEditor(name, isVim) {
+    if (!name) { outText((isVim ? "vim" : "nano") + ": missing filename"); return; }
+    const parts = pathParts(name);
+    const node = nodeAt(parts);
+    let content = "";
+    let isNew = true;
+    if (node) {
+      if (node.type === "dir") { outText("nano: " + name + ": Is a directory"); return; }
+      content = node.content || ""; isNew = false;
+    }
+    edCtx = { name, parts, isNew };
+    edArea.value = content;
+    edFile.textContent = (isNew ? "New Buffer — " : "") + name;
+    edTitle.textContent = isVim ? "VIM (nano keys)  " : "GNU nano 8.1";
+    edStatus.textContent = isNew ? "[ New File ]" : "[ Read " + content.split("\n").length + " lines ]";
+    editor.classList.add("open");
+    setTimeout(() => edArea.focus(), 30);
+    inputEnabled = false;
+  }
+  function saveEditor() {
+    const parts = edCtx.parts;
+    const parent = parentOf(parts);
+    const fname = parts[parts.length - 1];
+    if (!parent || parent.type !== "dir") { edStatus.textContent = "[ Error: cannot write to that path ]"; return; }
+    const isHtml = /\.html?$/.test(fname);
+    parent.children[fname] = { type: "file", content: edArea.value, html: isHtml };
+    const lines = edArea.value.split("\n").length;
+    edStatus.textContent = "[ Wrote " + lines + " lines ]";
+    edCtx.isNew = false;
+  }
+  function exitEditor() {
+    editor.classList.remove("open");
+    edCtx = null;
+    inputEnabled = true;
+    if (!inputLine) makeInputLine(); // return to a fresh shell prompt, like nano does
+    focusInput();
+  }
+  edArea.addEventListener("keydown", (e) => {
+    if (e.ctrlKey && (e.key === "o" || e.key === "O")) { e.preventDefault(); saveEditor(); }
+    else if (e.ctrlKey && (e.key === "x" || e.key === "X")) { e.preventDefault(); saveEditor(); exitEditor(); }
+    else if (e.ctrlKey && (e.key === "k" || e.key === "K")) {
+      e.preventDefault();
+      // cut current line
+      const v = edArea.value, pos = edArea.selectionStart;
+      let ls = v.lastIndexOf("\n", pos - 1) + 1;
+      let le = v.indexOf("\n", pos); if (le === -1) le = v.length; else le += 1;
+      edArea.value = v.slice(0, ls) + v.slice(le);
+      edArea.selectionStart = edArea.selectionEnd = ls;
+    }
+  });
+
+  // ======================================================================
+  //  Prompt / input handling
+  // ======================================================================
+  let buffer = "";
+  let cursorPos = 0;
+  let inputEnabled = false;
+  let promptStr = "";
+
+  function computePrompt() {
+    promptStr = "[" + USER + "@" + HOST + " " + baseName() + "]$ ";
+  }
+  function baseName() {
+    const dp = displayPath(cwd);
+    if (dp === "~") return "~";
+    const segs = dp.split("/");
+    return segs[segs.length - 1] || "/";
+  }
+
+  function makeInputLine() {
+    computePrompt();
+    inputLine = document.createElement("div");
+    inputLine.className = "line";
+    screen.appendChild(inputLine);
+    buffer = ""; cursorPos = 0;
+    renderInput();
+    scrollDown();
+  }
+
+  function renderInput() {
+    if (!inputLine) return;
+    const before = esc(buffer.slice(0, cursorPos));
+    const at = buffer.slice(cursorPos, cursorPos + 1);
+    const after = esc(buffer.slice(cursorPos + 1));
+    const cursorChar = at ? esc(at) : " ";
+    const focused = document.activeElement === kb || document.activeElement === screen || document.hasFocus();
+    inputLine.innerHTML =
+      '<span class="arch-b">[</span>' +
+      '<span class="fg-bright">' + USER + "</span>@" +
+      '<span class="fg-bright">' + HOST + "</span> " +
+      '<span class="dir">' + esc(baseName()) + "</span>" +
+      '<span class="arch-b">]$</span> ' +
+      before +
+      '<span id="cursor" class="' + (focused ? "" : "hollow") + '">' + cursorChar + "</span>" +
+      after;
+  }
+
+  function focusInput() {
+    // focus hidden input to raise mobile keyboard, but keep desktop key handling on document
+    try { kb.focus({ preventScroll: true }); } catch (e) {}
+  }
+
+  function freezeInputLine() {
+    // convert active line to static (remove cursor)
+    if (!inputLine) return;
+    inputLine.innerHTML =
+      '<span class="arch-b">[</span>' +
+      '<span class="fg-bright">' + USER + "</span>@" +
+      '<span class="fg-bright">' + HOST + "</span> " +
+      '<span class="dir">' + esc(baseName()) + "</span>" +
+      '<span class="arch-b">]$</span> ' + esc(buffer);
+    inputLine = null;
+  }
+
+  // ---- command runner ----
+  function tokenize(line) {
+    const m = line.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+    return m.map((t) => t.replace(/^["']|["']$/g, ""));
+  }
+
+  async function runLine(line, silent) {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    if (!silent) { HISTORY.push(trimmed); histIdx = HISTORY.length; }
+    const tokens = tokenize(trimmed);
+    let name = tokens[0];
+    // alias expansion
+    if (name === "ll") { tokens.splice(0, 1, "ls", "-lah"); name = "ls"; }
+    if (name === "..") { tokens.splice(0, 1, "cd", ".."); name = "cd"; }
+    const args = tokens.slice(1);
+
+    if (name === "pacman") { await pacman(args); return; }
+    if (commands[name]) {
+      const r = commands[name](args, trimmed);
+      if (r && typeof r.then === "function") await r;
+      return;
+    }
+    // command not found — Arch's helpful message
+    out('<span class="fail">' + esc(name) + ": command not found</span>");
+  }
+
+  async function submit() {
+    const line = buffer;
+    freezeInputLine();
+    inputEnabled = false;
+    await runLine(line, false);
+    inputEnabled = true;
+    if (!editor.classList.contains("open")) makeInputLine();
+    scrollDown();
+  }
+
+  // ---- tab completion ----
+  function complete() {
+    const tokens = buffer.slice(0, cursorPos).split(/\s+/);
+    const isFirst = tokens.length <= 1;
+    const frag = tokens[tokens.length - 1] || "";
+    let options = [];
+    if (isFirst) {
+      options = Object.keys(commands).concat(["pacman", "ll"]).filter((c) => c.startsWith(frag));
+    } else {
+      // path completion
+      let dirPart = "", base = frag;
+      const slash = frag.lastIndexOf("/");
+      if (slash >= 0) { dirPart = frag.slice(0, slash + 1); base = frag.slice(slash + 1); }
+      const r = resolve(dirPart || ".");
+      if (r.node && r.node.type === "dir")
+        options = Object.keys(r.node.children)
+          .filter((n) => n.startsWith(base))
+          .map((n) => dirPart + n + (r.node.children[n].type === "dir" ? "/" : ""));
+    }
+    if (options.length === 1) {
+      const rest = options[0].slice(frag.length);
+      buffer = buffer.slice(0, cursorPos) + rest + buffer.slice(cursorPos);
+      cursorPos += rest.length;
+      renderInput();
+    } else if (options.length > 1) {
+      // common prefix
+      let prefix = options[0];
+      for (const o of options) { while (!o.startsWith(prefix)) prefix = prefix.slice(0, -1); }
+      if (prefix.length > frag.length) {
+        const rest = prefix.slice(frag.length);
+        buffer = buffer.slice(0, cursorPos) + rest + buffer.slice(cursorPos);
+        cursorPos += rest.length;
+      } else {
+        freezeInputLine();
+        out(options.map((o) => {
+          const bare = o.replace(/\/$/, "");
+          return o.endsWith("/") ? '<span class="dir">' + esc(bare) + "/</span>" : esc(o);
+        }).join("   "));
+        makeInputLine();
+        buffer = tokens.slice(0, -1).concat(frag).join(" ");
+        // restore what was typed
+        buffer = (buffer.length ? buffer : frag);
+      }
+      renderInput();
+    }
+  }
+
+  // ---- keyboard ----
+  function onKey(e) {
+    if (booting) { skipBoot(); return; }
+    if (editor.classList.contains("open")) return; // editor handles its own keys
+    if (viewer.classList.contains("open")) {
+      if (e.key === "Escape") closeViewer();
+      return;
+    }
+    if (!inputEnabled) {
+      // allow Ctrl+C to interrupt
+      if (e.ctrlKey && (e.key === "c" || e.key === "C")) { /* no-op during async */ }
+      return;
+    }
+
+    const k = e.key;
+
+    if (e.ctrlKey) {
+      if (k === "l" || k === "L") { e.preventDefault(); commands.clear(); return; }
+      if (k === "c" || k === "C") {
+        e.preventDefault();
+        // echo ^C, abandon the current line, and drop to a fresh prompt
+        buffer += "^C";
+        cursorPos = buffer.length;
+        renderInput();
+        freezeInputLine();
+        makeInputLine();
+        return;
+      }
+      if (k === "u" || k === "U") { e.preventDefault(); buffer = buffer.slice(cursorPos); cursorPos = 0; renderInput(); return; }
+      if (k === "a" || k === "A") { e.preventDefault(); cursorPos = 0; renderInput(); return; }
+      if (k === "e" || k === "E") { e.preventDefault(); cursorPos = buffer.length; renderInput(); return; }
+      if (k === "k" || k === "K") { e.preventDefault(); buffer = buffer.slice(0, cursorPos); renderInput(); return; }
+      if (k === "w" || k === "W") {
+        e.preventDefault();
+        const left = buffer.slice(0, cursorPos).replace(/\s*\S+\s*$/, "");
+        buffer = left + buffer.slice(cursorPos); cursorPos = left.length; renderInput(); return;
+      }
+      return;
+    }
+
+    if (k === "Enter") { e.preventDefault(); submit(); return; }
+    if (k === "Backspace") {
+      e.preventDefault();
+      if (cursorPos > 0) { buffer = buffer.slice(0, cursorPos - 1) + buffer.slice(cursorPos); cursorPos--; renderInput(); }
+      return;
+    }
+    if (k === "Delete") {
+      e.preventDefault();
+      buffer = buffer.slice(0, cursorPos) + buffer.slice(cursorPos + 1); renderInput(); return;
+    }
+    if (k === "ArrowLeft") { e.preventDefault(); if (cursorPos > 0) cursorPos--; renderInput(); return; }
+    if (k === "ArrowRight") { e.preventDefault(); if (cursorPos < buffer.length) cursorPos++; renderInput(); return; }
+    if (k === "Home") { e.preventDefault(); cursorPos = 0; renderInput(); return; }
+    if (k === "End") { e.preventDefault(); cursorPos = buffer.length; renderInput(); return; }
+    if (k === "ArrowUp") {
+      e.preventDefault();
+      if (histIdx > 0) { histIdx--; buffer = HISTORY[histIdx] || ""; cursorPos = buffer.length; renderInput(); }
+      return;
+    }
+    if (k === "ArrowDown") {
+      e.preventDefault();
+      if (histIdx < HISTORY.length) { histIdx++; buffer = HISTORY[histIdx] || ""; cursorPos = buffer.length; renderInput(); }
+      return;
+    }
+    if (k === "Tab") { e.preventDefault(); complete(); return; }
+
+    if (k.length === 1 && !e.metaKey) {
+      e.preventDefault();
+      buffer = buffer.slice(0, cursorPos) + k + buffer.slice(cursorPos);
+      cursorPos++;
+      renderInput();
+    }
+  }
+
+  document.addEventListener("keydown", onKey);
+  // mobile: feed the hidden input's characters through
+  kb.addEventListener("input", () => {
+    const v = kb.value;
+    kb.value = "";
+    if (booting) { skipBoot(); return; }
+    if (!inputEnabled || editor.classList.contains("open")) return;
+    for (const ch of v) {
+      buffer = buffer.slice(0, cursorPos) + ch + buffer.slice(cursorPos);
+      cursorPos++;
+    }
+    renderInput();
+  });
+  screen.addEventListener("click", () => {
+    if (booting) { skipBoot(); return; }
+    if (!editor.classList.contains("open") && !viewer.classList.contains("open")) focusInput();
+  });
+  window.addEventListener("focus", () => { if (inputLine) renderInput(); });
+  window.addEventListener("blur", () => { if (inputLine) renderInput(); });
+
+  // ======================================================================
+  //  Boot sequence
+  // ======================================================================
+  let booting = true;
+  let bootSkipped = false;
+
+  const KLINE = (t, msg) => '<span class="muted">[</span>' + '<span class="muted">' + pad(t, 11) + "</span>" +
+    '<span class="muted">]</span> ' + esc(msg);
+
+  function okLine(msg, state) {
+    const s = state || "OK";
+    let inner;
+    if (s === "OK") inner = '  <span class="ok">OK</span>  ';
+    else if (s === "FAIL") inner = '<span class="fail">FAILED</span>';
+    else inner = ' <span class="warn">' + s + '</span> ';
+    return '<span class="tag">[</span>' + inner + '<span class="tag">]</span> ' + esc(msg);
+  }
+
+  const BOOT = [
+    { t: "k", d: 0, h: KLINE("0.000000", "Linux version " + KVER + " (linux@archlinux) (gcc (GCC) 14.2.1 20240805, GNU ld (GNU Binutils) 2.43.0) #1 SMP PREEMPT_DYNAMIC") },
+    { t: "k", d: 30, h: KLINE("0.000000", "Command line: BOOT_IMAGE=/vmlinuz-linux root=UUID=4f9a1c8e-2b7d-4a6f-9e3c-1b8a0d5f2e7c rw loglevel=3 quiet") },
+    { t: "k", d: 20, h: KLINE("0.004221", "KERNEL supported cpus:") },
+    { t: "k", d: 10, h: KLINE("0.181934", "smpboot: CPU0: AMD Ryzen 7 5800X 8-Core Processor (family: 0x19, model: 0x21)") },
+    { t: "k", d: 26, h: KLINE("0.402118", "Memory: 16299184K/16777216K available (14336K kernel code, 2489K rwdata)") },
+    { t: "k", d: 22, h: KLINE("0.618402", "systemd[1]: systemd 256.5-1-arch running in system mode (+PAM +AUDIT +SELINUX)") },
+    { t: "k", d: 18, h: KLINE("0.641190", "systemd[1]: Detected architecture x86-64.") },
+    { t: "k", d: 16, h: KLINE("0.659003", "systemd[1]: Hostname set to <" + HOST + ">.") },
+    { t: "blank" },
+    { t: "s", d: 40, h: okLine("Created slice Slice /system/getty.") },
+    { t: "s", d: 34, h: okLine("Created slice Slice /system/modprobe.") },
+    { t: "s", d: 30, h: okLine("Reached target Local Encrypted Volumes.") },
+    { t: "s", d: 44, h: okLine("Started Journal Service.") },
+    { t: "s", d: 30, h: okLine("Mounted /boot.") },
+    { t: "s", d: 40, h: okLine("Reached target Local File Systems.") },
+    { t: "s", d: 50, h: okLine("Started Load/Save OS Random Seed.") },
+    { t: "s", d: 36, h: okLine("Reached target System Initialization.") },
+    { t: "s", d: 46, h: okLine("Started Daily man-db regeneration.") },
+    { t: "s", d: 30, h: okLine("Started D-Bus System Message Bus.") },
+    { t: "s", d: 58, h: okLine("Started Network Manager.") },
+    { t: "s", d: 40, h: okLine("Reached target Network.") },
+    { t: "s", d: 34, h: okLine("Started OpenSSH Daemon.") },
+    { t: "s", d: 30, h: okLine("Started Permit User Sessions.") },
+    { t: "s", d: 44, h: okLine("Started Getty on tty1.") },
+    { t: "s", d: 30, h: okLine("Reached target Login Prompts.") },
+    { t: "s", d: 30, h: okLine("Reached target Multi-User System.") },
+    { t: "s", d: 30, h: okLine("Reached target Graphical Interface.") },
+    { t: "blank" },
+  ];
+
+  async function runBoot() {
+    // reduced motion / returning users: dump instantly
+    for (const step of BOOT) {
+      if (bootSkipped) break;
+      if (step.t === "blank") out("");
+      else out(step.h);
+      if (!reduceMotion && !bootSkipped) await sleep(step.d || 20);
+    }
+    if (!bootSkipped) await loginSequence();
+    else finishBoot();
+  }
+
+  async function loginSequence() {
+    out('<span class="fg-bright b">Arch Linux ' + KVER + " (tty1)</span>");
+    out("");
+    // login: prompt with typed username
+    const loginLine = out("");
+    loginLine.innerHTML = HOST + " login: ";
+    if (!reduceMotion) await sleep(500);
+    let typed = "";
+    for (const ch of USER) {
+      if (bootSkipped) break;
+      typed += ch;
+      loginLine.innerHTML = HOST + " login: " + '<span class="fg-bright">' + esc(typed) + "</span>";
+      scrollDown();
+      if (!reduceMotion) await sleep(rint(70, 150));
+    }
+    if (!reduceMotion && !bootSkipped) await sleep(250);
+    const passLine = out("");
+    passLine.innerHTML = "Password: ";
+    if (!reduceMotion && !bootSkipped) await sleep(700);
+    out('<span class="muted">Last login: Sun Aug 20 08:41:03 2026 on tty1</span>');
+    finishBoot();
+  }
+
+  function finishBoot() {
+    booting = false;
+    inputEnabled = true;
+    hint.style.opacity = "0";
+    // run .bashrc greeter (fastfetch) then hand over the prompt
+    fastfetch();
+    makeInputLine();
+    focusInput();
+  }
+
+  function skipBoot() {
+    if (!booting || bootSkipped) return;
+    bootSkipped = true;
+  }
+
+  // ======================================================================
+  //  reboot / poweroff
+  // ======================================================================
+  async function poweroffSeq() {
+    inputEnabled = false;
+    freezeInputLine();
+    out("");
+    const lines = [
+      okLine("Stopped target Graphical Interface."),
+      okLine("Stopped OpenSSH Daemon."),
+      okLine("Stopped Network Manager."),
+      okLine("Unmounted /boot."),
+      okLine("Reached target Power-Off."),
+    ];
+    for (const l of lines) { out(l); await sleep(reduceMotion ? 0 : 160); }
+    await sleep(reduceMotion ? 0 : 400);
+    out("");
+    out('<span class="muted">System halted. </span><a href="#" id="restart">Power on again</a>');
+    document.getElementById("restart").addEventListener("click", (e) => { e.preventDefault(); location.reload(); });
+  }
+
+  async function rebootSeq() {
+    inputEnabled = false;
+    freezeInputLine();
+    out("");
+    out(okLine("Reached target Reboot."));
+    await sleep(reduceMotion ? 0 : 500);
+    location.reload();
+  }
+
+  // ======================================================================
+  //  boot
+  // ======================================================================
+  const hint = $("#hint");
+  hint.textContent = "press any key to skip boot";
+  focusInput();
+  runBoot();
+
+})();
+</script>
