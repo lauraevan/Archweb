@@ -4,7 +4,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link
-  href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap"
+  href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap"
   rel="stylesheet"
 />
 
@@ -3481,12 +3481,23 @@ if get_option('buildtype') == 'release'
 
   // ======================================================================
   //  Noctalia shell — a faithful web session driven by the REAL palette,
-  //  bar layout and assets from noctalia-dev/noctalia-shell (v5.0.0, MIT).
-  //  (Noctalia is native Wayland/OpenGL-ES and cannot execute in a browser;
-  //   this reproduces its UI 1:1 from the project's own source of truth.)
+  //  bar layout, config and assets from noctalia-dev/noctalia-shell
+  //  (v5.0.0, MIT). Motion mirrors Noctalia's real easing set
+  //  (EaseOutQuad / EaseOutCubic / EaseOutBack; src/render/animation).
+  //  Noctalia is native Wayland/OpenGL-ES and cannot execute in a browser;
+  //  this reproduces its UI from the project's own source of truth.
   // ======================================================================
   let noctaliaOpen = false;
   let nocEl = null, nocClock = null;
+  let nocVolume = 62, nocBright = 80, nocWs = 1;
+  const NOC_WS_OCCUPIED = { 1: true, 2: true, 4: false };
+  // Noctalia easing set -> CSS cubic-beziers
+  const EZ = {
+    quad: "cubic-bezier(.25,.46,.45,.94)",
+    cubic: "cubic-bezier(.215,.61,.355,1)",
+    back: "cubic-bezier(.34,1.4,.5,1)",
+    inout: "cubic-bezier(.645,.045,.355,1)",
+  };
 
   function ic(name) {
     // compact Tabler-style line icons (stroke = currentColor)
@@ -3509,8 +3520,13 @@ if get_option('buildtype') == 'release'
       logout: 'M14 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2M9 12h12M18 9l3 3-3 3',
       restart: 'M4 12a8 8 0 1 0 3-6M4 4v5h5',
       term: 'M4 5h16v14H4zM7 9l3 3-3 3M13 15h4',
+      cal: 'M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM4 9h16M8 3v3M16 3v3',
+      x: 'M6 6l12 12M18 6L6 18',
+      check: 'M5 12l5 5L20 7',
+      play: 'M7 4v16l13-8z',
+      cpu: 'M6 6h12v12H6zM9 9h6v6H9M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2',
     };
-    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' +
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
       (P[name] || "").split("M").filter(Boolean).map((d) => '<path d="M' + d + '"/>').join("") + "</svg>";
   }
 
@@ -3518,85 +3534,145 @@ if get_option('buildtype') == 'release'
     if (document.getElementById("noc-style")) return;
     const s = document.createElement("style");
     s.id = "noc-style";
+    const SANS = "'Inter','SF Pro Display',system-ui,-apple-system,'Segoe UI',Roboto,'Noto Sans',sans-serif";
+    const sv = NOC.surfaceVariant, on = NOC.onSurface, onv = NOC.onSurfaceVariant, pri = NOC.primary, out = NOC.outline;
     s.textContent = [
-      "#noctalia{position:fixed;inset:0;z-index:80;display:none;color:" + NOC.onSurface + ";font-family:'JetBrains Mono','DejaVu Sans Mono',ui-sans-serif,sans-serif;}",
-      "#noctalia.open{display:block;}",
+      "#noctalia{position:fixed;inset:0;z-index:80;color:" + on + ";font-family:" + SANS + ";opacity:0;visibility:hidden;transition:opacity .35s " + EZ.quad + ",visibility 0s .35s;-webkit-font-smoothing:antialiased;}",
+      "#noctalia.open{opacity:1;visibility:visible;transition:opacity .4s " + EZ.quad + ";}",
+      // wallpaper (subtle animated aurora)
       "#noctalia .wall{position:absolute;inset:0;background:" +
-        "radial-gradient(1200px 700px at 78% -10%," + NOC.secondary + "22,transparent 55%)," +
-        "radial-gradient(900px 600px at 10% 110%," + NOC.tertiary + "18,transparent 55%)," +
-        "radial-gradient(700px 500px at 50% 40%," + NOC.primary + "0d,transparent 60%)," +
-        "linear-gradient(160deg,#0a0a24,#070722 60%,#05051a);}",
-      "#noctalia .grain{position:absolute;inset:0;opacity:.04;background-image:radial-gradient(#fff 0.5px,transparent 0.6px);background-size:3px 3px;}",
-      // bar
-      "#noctalia .bar{position:absolute;top:10px;left:180px;right:180px;height:34px;background:" + NOC.surface + "ee;border:1px solid " + NOC.outline + ";border-radius:12px;display:flex;align-items:center;gap:6px;padding:0 14px;box-shadow:0 10px 30px #00000066;backdrop-filter:blur(8px);}",
-      "@media(max-width:900px){#noctalia .bar{left:10px;right:10px;}}",
-      "#noctalia .bar .sec{display:flex;align-items:center;gap:6px;}",
-      "#noctalia .bar .center{position:absolute;left:50%;transform:translateX(-50%);}",
-      "#noctalia .bar .end{margin-left:auto;}",
-      "#noctalia .w{display:flex;align-items:center;justify-content:center;gap:6px;height:24px;min-width:24px;padding:0 7px;border-radius:8px;color:" + NOC.onSurface + ";cursor:pointer;font-size:12px;line-height:1;background:transparent;border:0;transition:background .12s,color .12s;}",
-      "#noctalia .w:hover{background:" + NOC.surfaceVariant + ";}",
-      "#noctalia .w svg{width:16px;height:16px;}",
-      "#noctalia .w.accent{color:" + NOC.primary + ";}",
-      "#noctalia .clock{font-weight:700;letter-spacing:.02em;color:" + NOC.onSurface + ";}",
-      "#noctalia .clock .date{color:" + NOC.onSurfaceVariant + ";font-weight:400;margin-left:8px;}",
-      "#noctalia .ws{display:flex;gap:5px;}",
-      "#noctalia .ws b{width:9px;height:9px;border-radius:50%;background:" + NOC.outline + ";cursor:pointer;transition:all .15s;}",
-      "#noctalia .ws b.on{background:" + NOC.primary + ";width:22px;border-radius:5px;}",
-      "#noctalia .ws b.has{background:" + NOC.onSurfaceVariant + ";}",
-      "#noctalia .batt{color:" + NOC.tertiary + ";font-weight:700;}",
-      // panels
-      "#noctalia .panel{position:absolute;background:" + NOC.surface + "f5;border:1px solid " + NOC.outline + ";border-radius:16px;box-shadow:0 24px 70px #000000aa;backdrop-filter:blur(14px);display:none;overflow:hidden;}",
-      "#noctalia .panel.show{display:block;animation:nocpop .16s ease;}",
-      "@keyframes nocpop{from{opacity:0;transform:translateY(-6px) scale(.98);}to{opacity:1;}}",
-      // launcher
-      "#noctalia #noc-launcher{top:54px;left:50%;transform:translateX(-50%);width:min(560px,92vw);padding:10px;}",
-      "#noctalia #noc-launcher .search{display:flex;align-items:center;gap:10px;padding:10px 12px;background:" + NOC.surfaceVariant + ";border-radius:12px;color:" + NOC.onSurfaceVariant + ";}",
-      "#noctalia #noc-launcher .search svg{width:18px;height:18px;}",
-      "#noctalia #noc-launcher input{flex:1;background:transparent;border:0;outline:0;color:" + NOC.onSurface + ";font:inherit;font-size:15px;}",
-      "#noctalia .applist{margin-top:8px;max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;}",
-      "#noctalia .app{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:10px;cursor:pointer;}",
-      "#noctalia .app:hover,#noctalia .app.sel{background:" + NOC.surfaceVariant + ";}",
-      "#noctalia .app .ico{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-size:16px;flex:0 0 auto;}",
-      "#noctalia .app .nm{font-size:14px;color:" + NOC.onSurface + ";}",
-      "#noctalia .app .desc{font-size:12px;color:" + NOC.onSurfaceVariant + ";}",
-      // control center
-      "#noctalia #noc-cc{top:54px;right:180px;width:min(360px,92vw);padding:16px;}",
-      "@media(max-width:900px){#noctalia #noc-cc{right:10px;}}",
+        "radial-gradient(1300px 780px at 78% -12%," + NOC.secondary + "26,transparent 55%)," +
+        "radial-gradient(1000px 680px at 8% 112%," + NOC.tertiary + "1f,transparent 55%)," +
+        "radial-gradient(760px 560px at 50% 42%," + pri + "10,transparent 60%)," +
+        "linear-gradient(158deg,#0a0a26,#070722 58%,#050518);transform:scale(1.04);transition:transform 1.2s " + EZ.cubic + ";}",
+      "#noctalia.open .wall{transform:scale(1);}",
+      "#noctalia .grain{position:absolute;inset:0;opacity:.05;background-image:radial-gradient(#fff .5px,transparent .6px);background-size:3px 3px;pointer-events:none;}",
+      // rounded screen corners (Noctalia's signature)
+      "#noctalia .corner{position:absolute;width:13px;height:13px;pointer-events:none;z-index:90;}",
+      "#noctalia .corner.tl{top:0;left:0;background:radial-gradient(circle at bottom right,transparent 13px,#050518 13.5px);}",
+      "#noctalia .corner.tr{top:0;right:0;background:radial-gradient(circle at bottom left,transparent 13px,#050518 13.5px);}",
+      "#noctalia .corner.bl{bottom:0;left:0;background:radial-gradient(circle at top right,transparent 13px,#050518 13.5px);}",
+      "#noctalia .corner.br{bottom:0;right:0;background:radial-gradient(circle at top left,transparent 13px,#050518 13.5px);}",
+      // bar (exact: top, thickness 34, radius 12, margin_edge 10, margin_ends 180, padding 14, spacing 6, solid)
+      "#noctalia .bar{position:absolute;top:10px;left:180px;right:180px;height:34px;background:" + NOC.surface + ";border:1px solid " + out + "aa;border-radius:12px;display:flex;align-items:center;gap:6px;padding:0 14px;box-shadow:0 8px 26px #00000073,inset 0 1px 0 #ffffff08;transform:translateY(-58px);opacity:0;transition:transform .52s " + EZ.back + ",opacity .3s " + EZ.quad + ";}",
+      "#noctalia.open .bar{transform:translateY(0);opacity:1;}",
+      "@media(max-width:1000px){#noctalia .bar{left:12px;right:12px;}}",
+      "#noctalia .bar .sec{display:flex;align-items:center;gap:6px;height:100%;min-width:0;}",
+      "#noctalia .bar .start{flex:1 1 0;justify-content:flex-start;}",
+      "#noctalia .bar .center{flex:0 0 auto;}",
+      "#noctalia .bar .end{flex:1 1 0;justify-content:flex-end;}",
+      "@media(max-width:1180px){#noctalia .media-chip .t{display:none;}#noctalia .tray{display:none;}}",
+      "#noctalia .w{display:flex;align-items:center;justify-content:center;gap:6px;height:24px;min-width:24px;padding:0 7px;border-radius:8px;color:" + on + ";cursor:pointer;font-size:12.5px;font-weight:500;line-height:1;background:transparent;border:0;font-family:inherit;transition:background .14s " + EZ.quad + ",transform .14s " + EZ.back + ",color .14s;}",
+      "#noctalia .w:hover{background:" + sv + ";}",
+      "#noctalia .w:active{transform:scale(.9);}",
+      "#noctalia button:focus{outline:none;}",
+      "#noctalia button:focus-visible{outline:2px solid " + pri + ";outline-offset:2px;}",
+      "#noctalia .w svg{width:17px;height:17px;}",
+      "#noctalia .w.accent{color:" + pri + ";}",
+      "#noctalia .w.active-panel{background:" + sv + ";}",
+      "#noctalia .clock{font-weight:600;letter-spacing:.01em;color:" + on + ";font-variant-numeric:tabular-nums;}",
+      "#noctalia .clock .date{color:" + onv + ";font-weight:400;margin-left:8px;}",
+      "#noctalia .media-chip{max-width:190px;overflow:hidden;}",
+      "#noctalia .media-chip .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:" + onv + ";font-weight:400;}",
+      "#noctalia .tray{display:flex;align-items:center;gap:2px;color:" + onv + ";}",
+      "#noctalia .tray svg{width:15px;height:15px;}",
+      // workspaces (pill morph)
+      "#noctalia .ws{display:flex;align-items:center;gap:6px;padding:0 4px;}",
+      "#noctalia .ws b{width:8px;height:8px;border-radius:99px;background:" + out + ";cursor:pointer;transition:width .34s " + EZ.back + ",background .25s " + EZ.quad + ";}",
+      "#noctalia .ws b.has{background:" + onv + ";}",
+      "#noctalia .ws b.on{background:" + pri + ";width:24px;}",
+      "#noctalia .batt{color:" + NOC.tertiary + ";font-weight:600;font-variant-numeric:tabular-nums;}",
+      // panels — animate in AND out (EaseOutBack pop)
+      "#noctalia .panel{position:absolute;z-index:78;background:" + NOC.surface + "f7;border:1px solid " + out + "cc;border-radius:18px;box-shadow:0 26px 74px #000000b0,inset 0 1px 0 #ffffff0a;backdrop-filter:blur(18px) saturate(1.2);overflow:hidden;opacity:0;visibility:hidden;transform:translateY(-10px) scale(.97);transform-origin:top center;transition:opacity .18s " + EZ.quad + ",transform .28s " + EZ.back + ",visibility 0s .28s;}",
+      "#noctalia .panel.show{opacity:1;visibility:visible;transform:translateY(0) scale(1);transition:opacity .2s " + EZ.quad + ",transform .3s " + EZ.back + ";}",
+      // launcher (floating, centered)
+      "#noctalia #noc-launcher{top:54px;left:50%;margin-left:-280px;width:560px;max-width:92vw;padding:10px;transform-origin:top center;}",
+      "@media(max-width:600px){#noctalia #noc-launcher{left:4vw;margin-left:0;width:92vw;}}",
+      "#noctalia .search{display:flex;align-items:center;gap:10px;padding:11px 14px;background:" + sv + ";border-radius:13px;color:" + onv + ";}",
+      "#noctalia .search svg{width:19px;height:19px;flex:0 0 auto;}",
+      "#noctalia .search input{flex:1;background:transparent;border:0;outline:0;color:" + on + ";font:inherit;font-size:15px;}",
+      "#noctalia .applist{margin-top:8px;max-height:352px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;scrollbar-width:thin;scrollbar-color:" + out + " transparent;}",
+      "#noctalia .app{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:11px;cursor:pointer;transition:background .13s " + EZ.quad + ";opacity:0;transform:translateY(6px);animation:nocrise .3s " + EZ.cubic + " forwards;}",
+      "@keyframes nocrise{to{opacity:1;transform:none;}}",
+      "#noctalia .app:hover,#noctalia .app.sel{background:" + sv + ";}",
+      "#noctalia .app .ico{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;font-size:17px;flex:0 0 auto;}",
+      "#noctalia .app .nm{font-size:14px;font-weight:500;color:" + on + ";}",
+      "#noctalia .app .desc{font-size:12px;color:" + onv + ";}",
+      "#noctalia .app .go{margin-left:auto;color:" + onv + ";font-size:11px;opacity:0;}",
+      "#noctalia .app.sel .go{opacity:1;}",
+      // control center (attached under its button)
+      "#noctalia #noc-cc{top:52px;right:14px;width:344px;max-width:92vw;padding:16px;transform-origin:top right;}",
       "#noctalia .cc-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;}",
-      "#noctalia .cc-head .av{width:42px;height:42px;border-radius:50%;background:" + NOC.primary + ";color:" + NOC.onPrimary + ";display:grid;place-items:center;font-weight:700;font-size:18px;}",
-      "#noctalia .toggles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;}",
-      "#noctalia .tg{display:flex;align-items:center;gap:10px;padding:12px;border-radius:12px;background:" + NOC.surfaceVariant + ";cursor:pointer;color:" + NOC.onSurfaceVariant + ";}",
-      "#noctalia .tg.on{background:" + NOC.primary + ";color:" + NOC.onPrimary + ";}",
-      "#noctalia .tg svg{width:18px;height:18px;}",
-      "#noctalia .sld{margin:10px 0;}",
-      "#noctalia .sld label{display:flex;align-items:center;gap:8px;font-size:12px;color:" + NOC.onSurfaceVariant + ";margin-bottom:6px;}",
-      "#noctalia .sld label svg{width:16px;height:16px;flex:0 0 auto;}",
-      "#noctalia .sld input{width:100%;accent-color:" + NOC.primary + ";}",
-      // session
-      "#noctalia #noc-session{top:54px;right:10px;width:230px;padding:8px;}",
-      "#noctalia .sess{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;cursor:pointer;color:" + NOC.onSurface + ";}",
-      "#noctalia .sess:hover{background:" + NOC.surfaceVariant + ";}",
+      "#noctalia .cc-head .av{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg," + pri + "," + NOC.tertiary + ");color:" + NOC.onPrimary + ";display:grid;place-items:center;font-weight:700;font-size:19px;}",
+      "#noctalia .cc-head .nm{font-weight:600;font-size:15px;}",
+      "#noctalia .cc-head .sub{font-size:12px;color:" + onv + ";}",
+      "#noctalia .toggles{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:16px;}",
+      "#noctalia .tg{display:flex;align-items:center;gap:10px;padding:13px;border-radius:14px;background:" + sv + ";cursor:pointer;color:" + onv + ";font-size:13px;font-weight:500;transition:background .18s " + EZ.quad + ",color .18s,transform .14s " + EZ.back + ";}",
+      "#noctalia .tg:active{transform:scale(.96);}",
+      "#noctalia .tg.on{background:" + pri + ";color:" + NOC.onPrimary + ";}",
+      "#noctalia .tg svg{width:19px;height:19px;flex:0 0 auto;}",
+      "#noctalia .sld{margin:12px 2px;}",
+      "#noctalia .sld label{display:flex;align-items:center;gap:9px;font-size:12.5px;color:" + onv + ";margin-bottom:8px;}",
+      "#noctalia .sld label svg{width:17px;height:17px;flex:0 0 auto;}",
+      "#noctalia .sld .val{margin-left:auto;font-variant-numeric:tabular-nums;color:" + on + ";}",
+      "#noctalia .sld input[type=range]{width:100%;-webkit-appearance:none;appearance:none;height:7px;border-radius:99px;background:" + sv + ";outline:0;}",
+      "#noctalia .sld input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:" + pri + ";border:0;box-shadow:0 1px 4px #0007;cursor:pointer;transition:transform .1s;}",
+      "#noctalia .sld input[type=range]::-webkit-slider-thumb:active{transform:scale(1.25);}",
+      "#noctalia .sld input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:" + pri + ";border:0;cursor:pointer;}",
+      // session (attached top-right)
+      "#noctalia #noc-session{top:52px;right:14px;width:236px;padding:8px;transform-origin:top right;}",
+      "#noctalia .sess{display:flex;align-items:center;gap:12px;padding:12px 13px;border-radius:12px;cursor:pointer;color:" + on + ";font-size:14px;font-weight:500;transition:background .14s " + EZ.quad + ",color .14s;}",
+      "#noctalia .sess:hover{background:" + sv + ";}",
       "#noctalia .sess.danger:hover{background:" + NOC.error + ";color:#fff;}",
-      "#noctalia .sess svg{width:18px;height:18px;}",
+      "#noctalia .sess svg{width:19px;height:19px;}",
+      // calendar popover
+      "#noctalia #noc-cal{top:52px;left:50%;transform:translateX(-50%) translateY(-10px) scale(.97);margin-left:0;width:300px;padding:16px;transform-origin:top center;}",
+      "#noctalia #noc-cal.show{transform:translateX(-50%) translateY(0) scale(1);}",
+      "#noctalia .cal-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;}",
+      "#noctalia .cal-top .m{font-weight:600;font-size:15px;}",
+      "#noctalia .cal-top .y{color:" + onv + ";font-size:13px;}",
+      "#noctalia .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;text-align:center;}",
+      "#noctalia .cal-grid .dow{color:" + onv + ";font-size:11px;padding:4px 0;font-weight:600;}",
+      "#noctalia .cal-grid .d{font-size:12.5px;padding:6px 0;border-radius:8px;color:" + on + ";}",
+      "#noctalia .cal-grid .d.today{background:" + pri + ";color:" + NOC.onPrimary + ";font-weight:700;}",
+      "#noctalia .cal-grid .d.pad{color:" + onv + "66;}",
       // welcome card
-      "#noctalia .welcome{position:absolute;top:46%;left:50%;transform:translate(-50%,-50%);text-align:center;max-width:520px;padding:20px;display:flex;flex-direction:column;align-items:center;}",
-      "#noctalia .welcome .logo{width:96px;height:96px;margin:0 auto 16px;filter:drop-shadow(0 8px 30px " + NOC.primary + "40);}",
+      "#noctalia .welcome{position:absolute;top:44%;left:50%;transform:translate(-50%,-50%);text-align:center;max-width:520px;padding:20px;display:flex;flex-direction:column;align-items:center;opacity:0;transition:opacity .6s " + EZ.quad + " .25s,transform .6s " + EZ.back + " .25s;}",
+      "#noctalia.open .welcome{opacity:1;}",
+      "#noctalia .welcome .logo{width:96px;height:96px;margin:0 auto 16px;filter:drop-shadow(0 8px 34px " + pri + "45);animation:nocfloat 5s ease-in-out infinite;}",
+      "@keyframes nocfloat{0%,100%{transform:translateY(0);}50%{transform:translateY(-7px);}}",
       "#noctalia .welcome .logo svg{width:100%;height:100%;display:block;}",
-      "#noctalia .welcome h1{font-size:32px;margin:0 0 2px;letter-spacing:-.01em;}",
-      "#noctalia .welcome h1 b{color:" + NOC.primary + ";}",
-      "#noctalia .welcome .v{color:" + NOC.onSurfaceVariant + ";font-size:13px;margin-bottom:16px;}",
-      "#noctalia .welcome .tips{background:" + NOC.surface + "cc;border:1px solid " + NOC.outline + ";border-radius:14px;padding:14px 16px;text-align:left;font-size:13px;color:" + NOC.onSurfaceVariant + ";line-height:1.7;}",
-      "#noctalia .welcome .tips b{color:" + NOC.onSurface + ";}",
-      "#noctalia .welcome .tips .k{color:" + NOC.primary + ";}",
-      // OSD toast + lock
-      "#noctalia .osd{position:absolute;bottom:40px;left:50%;transform:translateX(-50%);background:" + NOC.surface + "f0;border:1px solid " + NOC.outline + ";border-radius:14px;padding:12px 18px;display:none;align-items:center;gap:12px;box-shadow:0 12px 40px #000a;}",
-      "#noctalia .osd.show{display:flex;animation:nocpop .16s ease;}",
-      "#noctalia .lock{position:absolute;inset:0;z-index:5;background:linear-gradient(160deg,#0a0a24,#05051a);display:none;flex-direction:column;align-items:center;justify-content:center;gap:8px;}",
-      "#noctalia .lock.show{display:flex;}",
-      "#noctalia .lock .t{font-size:76px;font-weight:800;letter-spacing:-.02em;color:" + NOC.onSurface + ";}",
-      "#noctalia .lock .d{color:" + NOC.onSurfaceVariant + ";font-size:15px;}",
-      "#noctalia .lock .hint{position:absolute;bottom:60px;color:" + NOC.onSurfaceVariant + ";font-size:13px;}",
-      "#noctalia .lock input{margin-top:18px;background:" + NOC.surfaceVariant + ";border:1px solid " + NOC.outline + ";border-radius:24px;padding:10px 18px;color:" + NOC.onSurface + ";font:inherit;text-align:center;outline:none;width:280px;}",
+      "#noctalia .welcome h1{font-size:30px;font-weight:700;margin:0 0 3px;letter-spacing:-.02em;color:" + pri + ";}",
+      "#noctalia .welcome .v{color:" + onv + ";font-size:13px;margin-bottom:16px;}",
+      "#noctalia .welcome .tips{background:" + NOC.surface + "d9;border:1px solid " + out + "aa;border-radius:16px;padding:14px 18px;text-align:left;font-size:13px;color:" + onv + ";line-height:1.75;}",
+      "#noctalia .welcome .tips b{color:" + on + ";font-weight:600;}",
+      "#noctalia .welcome .tips .k{color:" + pri + ";font-weight:600;}",
+      // OSD (bottom center pill) — volume / brightness
+      "#noctalia .osd{position:absolute;bottom:56px;left:50%;transform:translateX(-50%) translateY(16px);background:" + NOC.surface + "f2;border:1px solid " + out + "cc;border-radius:20px;padding:12px 18px;display:flex;align-items:center;gap:14px;box-shadow:0 14px 44px #000b;opacity:0;visibility:hidden;transition:opacity .2s " + EZ.quad + ",transform .28s " + EZ.back + ",visibility 0s .28s;min-width:230px;}",
+      "#noctalia .osd.show{opacity:1;visibility:visible;transform:translateX(-50%) translateY(0);transition:opacity .2s " + EZ.quad + ",transform .28s " + EZ.back + ";}",
+      "#noctalia .osd svg{width:22px;height:22px;color:" + pri + ";flex:0 0 auto;}",
+      "#noctalia .osd .track{flex:1;height:8px;border-radius:99px;background:" + sv + ";overflow:hidden;}",
+      "#noctalia .osd .fill{height:100%;background:" + pri + ";border-radius:99px;transition:width .18s " + EZ.cubic + ";}",
+      "#noctalia .osd .pct{font-variant-numeric:tabular-nums;font-size:13px;color:" + on + ";min-width:34px;text-align:right;}",
+      // notifications (top-right stack, slide in)
+      "#noctalia .notifs{position:absolute;top:56px;right:14px;display:flex;flex-direction:column;gap:10px;width:340px;max-width:90vw;z-index:60;}",
+      "#noctalia .notif{background:" + NOC.surface + "f2;border:1px solid " + out + "cc;border-radius:16px;padding:13px 14px;box-shadow:0 16px 44px #000a;display:flex;gap:12px;transform:translateX(120%);opacity:0;transition:transform .34s " + EZ.back + ",opacity .3s " + EZ.quad + ";cursor:pointer;}",
+      "#noctalia .notif.show{transform:translateX(0);opacity:1;}",
+      "#noctalia .notif.out{transform:translateX(120%);opacity:0;}",
+      "#noctalia .notif .nico{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;font-size:18px;flex:0 0 auto;background:" + pri + "22;color:" + pri + ";}",
+      "#noctalia .notif .ntitle{font-weight:600;font-size:13.5px;color:" + on + ";}",
+      "#noctalia .notif .nbody{font-size:12.5px;color:" + onv + ";margin-top:2px;line-height:1.5;}",
+      "#noctalia .notif .napp{font-size:11px;color:" + onv + ";margin-top:4px;text-transform:uppercase;letter-spacing:.04em;}",
+      // lock
+      "#noctalia .lock{position:absolute;inset:0;z-index:95;background:radial-gradient(1200px 800px at 50% 30%," + NOC.secondary + "1a,transparent 60%),linear-gradient(160deg,#0a0a26,#050518);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;opacity:0;visibility:hidden;transition:opacity .4s " + EZ.quad + ",visibility 0s .4s;}",
+      "#noctalia .lock.show{opacity:1;visibility:visible;transition:opacity .45s " + EZ.quad + ";}",
+      "#noctalia .lock .t{font-size:84px;font-weight:800;letter-spacing:-.03em;color:" + on + ";font-variant-numeric:tabular-nums;}",
+      "#noctalia .lock .d{color:" + onv + ";font-size:16px;margin-bottom:12px;}",
+      "#noctalia .lock .lav{width:70px;height:70px;border-radius:50%;background:linear-gradient(135deg," + pri + "," + NOC.tertiary + ");color:" + NOC.onPrimary + ";display:grid;place-items:center;font-weight:700;font-size:28px;margin-bottom:14px;}",
+      "#noctalia .lock input{margin-top:6px;background:" + NOC.surface + "cc;border:1px solid " + out + ";border-radius:24px;padding:11px 20px;color:" + on + ";font:inherit;text-align:center;outline:none;width:280px;transition:border-color .2s;}",
+      "#noctalia .lock input:focus{border-color:" + pri + ";}",
+      "#noctalia .lock .hint{position:absolute;bottom:56px;color:" + onv + ";font-size:13px;}",
+      "@media(prefers-reduced-motion:reduce){#noctalia *,#noctalia{transition-duration:.01ms!important;animation:none!important;}}",
     ].join("\n");
     document.head.appendChild(s);
   }
@@ -3609,54 +3685,63 @@ if get_option('buildtype') == 'release'
     ["Steam", "Games", "🎯", "#66c0f4"], ["Neovim", "Text Editor", "📝", NOC.tertiary],
   ];
 
+  const NOC_PANELS = ["noc-launcher", "noc-cc", "noc-session", "noc-cal"];
+  const PANEL_BTN = { "noc-launcher": "launcher", "noc-cc": "cc", "noc-session": "session", "noc-cal": "clock" };
+
   function buildNoctalia() {
     if (nocEl) return;
     nocStyle();
     const el = document.createElement("div");
     el.id = "noctalia";
-    const barEnd = ["media:music", "tray:grid", "notif:bell", "clip:clip", "net:wifi", "bt:bt", "vol:vol", "bri:sun"];
     el.innerHTML =
       '<div class="wall"></div><div class="grain"></div>' +
+      '<div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>' +
       '<div class="welcome" id="noc-welcome">' +
         '<div class="logo">' + bundled("noc-svg") + "</div>" +
-        "<h1><b>Noctalia</b></h1>" +
-        '<div class="v">v' + NOC_VERSION + " · native Wayland shell · rendered from the real palette &amp; layout</div>" +
+        "<h1>Noctalia</h1>" +
+        '<div class="v">v' + NOC_VERSION + " · native Wayland shell · reproduced from the real palette &amp; layout</div>" +
         '<div class="tips">' +
-          'Open the <b>launcher</b> <span class="k">(top-left grid)</span> to find apps.<br>' +
-          'Open the <b>control center</b> <span class="k">(top-right ⚙)</span> for toggles &amp; sliders.<br>' +
-          'Click <b>session</b> <span class="k">(top-right ⏻)</span> → <b>Log Out</b> to return to the terminal.<br>' +
-          'Everything here is themed with Noctalia&apos;s exact <span class="k">#fff59b / #070722</span> palette.' +
+          'Open the <b>launcher</b> <span class="k">(top-left grid)</span> — search apps or type <span class="k">/calc&nbsp;21*2</span>.<br>' +
+          'Open the <b>control center</b> <span class="k">(gear)</span>; scroll the <b>volume</b>/<b>brightness</b> widgets for OSDs.<br>' +
+          'Click the <b>clock</b> for the calendar, <b>session</b> <span class="k">(⏻)</span> → <b>Log Out</b> to return to the terminal.' +
         "</div>" +
       "</div>" +
       '<div class="bar">' +
         '<div class="sec start">' +
-          '<button class="w accent" data-act="launcher" title="Launcher">' + ic("grid") + "</button>" +
+          '<button class="w accent" data-act="launcher" title="Launcher (Super)">' + ic("grid") + "</button>" +
           '<button class="w" data-act="wallpaper" title="Wallpaper">' + ic("photo") + "</button>" +
           '<div class="ws" id="noc-ws"></div>' +
         "</div>" +
-        '<div class="sec center"><button class="w" data-act="clock"><span class="clock" id="noc-clock"></span></button></div>' +
+        '<div class="sec center"><button class="w" data-act="clock" title="Calendar"><span class="clock" id="noc-clock"></span></button></div>' +
         '<div class="sec end">' +
-          barEnd.map((x) => { const [id, i] = x.split(":"); return '<button class="w" data-act="' + id + '" title="' + id + '">' + ic(i) + "</button>"; }).join("") +
+          '<button class="w media-chip" data-act="media" title="Media"><span>' + ic("music") + '</span><span class="t">Weightless — Marconi Union</span></button>' +
+          '<span class="tray" title="System tray">' + ic("wifi") + ic("vol") + ic("bt") + "</span>" +
+          '<button class="w" data-act="notif" title="Notifications">' + ic("bell") + "</button>" +
+          '<button class="w" data-act="clip" title="Clipboard">' + ic("clip") + "</button>" +
+          '<button class="w" data-act="net" title="Network">' + ic("wifi") + "</button>" +
+          '<button class="w" data-act="bt" title="Bluetooth">' + ic("bt") + "</button>" +
+          '<button class="w" data-act="vol" title="Volume (scroll)">' + ic("vol") + "</button>" +
+          '<button class="w" data-act="bri" title="Brightness (scroll)">' + ic("sun") + "</button>" +
           '<button class="w batt" data-act="batt" title="Battery"><span>84%</span></button>' +
           '<button class="w" data-act="cc" title="Control Center">' + ic("settings") + "</button>" +
           '<button class="w" data-act="session" title="Session">' + ic("power") + "</button>" +
         "</div>" +
       "</div>" +
-      // launcher panel
+      // launcher
       '<div class="panel" id="noc-launcher"><div class="search">' + ic("search") +
-        '<input id="noc-search" placeholder="Search apps, /calc 2+2, /emo…" autocomplete="off" spellcheck="false"></div>' +
+        '<input id="noc-search" placeholder="Search apps, /calc 21*2 …" autocomplete="off" spellcheck="false"></div>' +
         '<div class="applist" id="noc-apps"></div></div>' +
       // control center
       '<div class="panel" id="noc-cc">' +
-        '<div class="cc-head"><div class="av">' + USER[0].toUpperCase() + "</div><div><div style=\"font-weight:700\">" + USER + "</div><div style=\"font-size:12px;color:" + NOC.onSurfaceVariant + '">' + HOST + "</div></div></div>" +
+        '<div class="cc-head"><div class="av">' + USER[0].toUpperCase() + '</div><div><div class="nm">' + USER + '</div><div class="sub">' + HOST + " · Arch Linux</div></div></div>" +
         '<div class="toggles">' +
           '<div class="tg on" data-t="wifi">' + ic("wifi") + "<span>Wi‑Fi</span></div>" +
           '<div class="tg" data-t="bt">' + ic("bt") + "<span>Bluetooth</span></div>" +
           '<div class="tg" data-t="night">' + ic("moon") + "<span>Night Light</span></div>" +
           '<div class="tg" data-t="dnd">' + ic("bell") + "<span>Do Not Disturb</span></div>" +
         "</div>" +
-        '<div class="sld"><label>' + ic("vol") + ' Volume <span id="noc-volv" style="margin-left:auto">62%</span></label><input type="range" id="noc-vol" min="0" max="100" value="62"></div>' +
-        '<div class="sld"><label>' + ic("sun") + ' Brightness <span id="noc-briv" style="margin-left:auto">80%</span></label><input type="range" id="noc-bri" min="0" max="100" value="80"></div>' +
+        '<div class="sld"><label>' + ic("vol") + '<span>Volume</span><span class="val" id="noc-volv">62%</span></label><input type="range" id="noc-vol" min="0" max="100" value="62"></div>' +
+        '<div class="sld"><label>' + ic("sun") + '<span>Brightness</span><span class="val" id="noc-briv">80%</span></label><input type="range" id="noc-bri" min="0" max="100" value="80"></div>' +
       "</div>" +
       // session
       '<div class="panel" id="noc-session">' +
@@ -3665,47 +3750,73 @@ if get_option('buildtype') == 'release'
         '<div class="sess danger" data-s="reboot">' + ic("restart") + "<span>Reboot</span></div>" +
         '<div class="sess danger" data-s="shutdown">' + ic("power") + "<span>Shut Down</span></div>" +
       "</div>" +
-      // OSD + lock
-      '<div class="osd" id="noc-osd"></div>' +
-      '<div class="lock" id="noc-lock"><div class="t" id="noc-lock-t"></div><div class="d" id="noc-lock-d"></div>' +
-        '<input id="noc-lock-in" type="password" placeholder="Enter password to unlock" value=""><div class="hint">Press Enter to unlock</div></div>';
+      // calendar
+      '<div class="panel" id="noc-cal"></div>' +
+      // OSD (structured), notifications, lock
+      '<div class="osd" id="noc-osd"><span class="ico">' + ic("vol") + '</span><div class="track"><div class="fill"></div></div><span class="pct"></span></div>' +
+      '<div class="notifs" id="noc-notifs"></div>' +
+      '<div class="lock" id="noc-lock"><div class="lav">' + USER[0].toUpperCase() + '</div><div class="t" id="noc-lock-t"></div><div class="d" id="noc-lock-d"></div>' +
+        '<input id="noc-lock-in" type="password" placeholder="Password" value=""><div class="hint">Press Enter to unlock</div></div>';
     document.body.appendChild(el);
     nocEl = el;
 
-    // workspaces
+    // workspaces (pill morph)
     const ws = el.querySelector("#noc-ws");
-    ws.innerHTML = [1, 2, 3, 4, 5].map((n) => '<b class="' + (n === 1 ? "on" : n === 2 ? "has" : "") + '" data-ws="' + n + '"></b>').join("");
-    ws.addEventListener("click", (e) => { const b = e.target.closest("b"); if (!b) return; ws.querySelectorAll("b").forEach((x) => x.classList.remove("on")); b.classList.add("on"); });
+    ws.innerHTML = [1, 2, 3, 4, 5].map((n) => '<b class="' + (n === nocWs ? "on" : NOC_WS_OCCUPIED[n] ? "has" : "") + '" data-ws="' + n + '"></b>').join("");
+    ws.addEventListener("click", (e) => { const b = e.target.closest("b"); if (!b) return; nocWs = +b.getAttribute("data-ws"); syncWorkspaces(); });
 
     // bar actions
     el.querySelector(".bar").addEventListener("click", (e) => {
       const btn = e.target.closest(".w"); if (!btn) return;
       const act = btn.getAttribute("data-act");
-      if (act === "launcher") togglePanel("noc-launcher", () => { const s = el.querySelector("#noc-search"); s.value = ""; renderApps(""); setTimeout(() => s.focus(), 20); });
+      if (act === "launcher") togglePanel("noc-launcher", () => { const s = el.querySelector("#noc-search"); s.value = ""; renderApps(""); setTimeout(() => s.focus(), 30); });
       else if (act === "cc") togglePanel("noc-cc");
       else if (act === "session") togglePanel("noc-session");
-      else if (act === "wallpaper") nocToast(ic("photo") + " Wallpaper picker — 12 wallpapers available");
-      else if (act === "clock") nocToast(ic("bell") + " " + new Date().toDateString());
-      else nocToast(nocWidgetMsg(act));
+      else if (act === "clock") togglePanel("noc-cal", renderCalendar);
+      else if (act === "wallpaper") pushNotif({ icon: "🖼", title: "Wallpaper", body: "12 wallpapers available in ~/Pictures/wallpapers", app: "Noctalia" });
+      else if (act === "vol") showOSD("vol", nocVolume);
+      else if (act === "bri") showOSD("bri", nocBright);
+      else if (act === "net") pushNotif({ icon: "📶", title: "Network", body: "Connected · enp5s0 · 192.168.1.42/24", app: "NetworkManager" });
+      else if (act === "bt") pushNotif({ icon: "🔵", title: "Bluetooth", body: "On · 0 devices connected", app: "BlueZ" });
+      else if (act === "media") pushNotif({ icon: "🎵", title: "Weightless", body: "Marconi Union — Ambient", app: "MPRIS" });
+      else if (act === "clip") pushNotif({ icon: "📋", title: "Clipboard", body: "History is empty", app: "Noctalia" });
+      else if (act === "notif") pushNotif({ icon: "🔔", title: "Notifications", body: "You're all caught up", app: "Noctalia" });
+      else if (act === "batt") pushNotif({ icon: "🔋", title: "Battery 84%", body: "Discharging · about 4h 12m remaining", app: "UPower" });
     });
+    // scroll to change volume / brightness on their bar widgets
+    el.querySelectorAll('[data-act="vol"],[data-act="bri"]').forEach((b) => b.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const kind = b.getAttribute("data-act");
+      const delta = e.deltaY < 0 ? 3 : -3;
+      if (kind === "vol") { nocVolume = Math.max(0, Math.min(100, nocVolume + delta)); showOSD("vol", nocVolume); syncSliders(); }
+      else { nocBright = Math.max(0, Math.min(100, nocBright + delta)); showOSD("bri", nocBright); syncSliders(); }
+    }, { passive: false }));
 
     // launcher search
     const search = el.querySelector("#noc-search");
     search.addEventListener("input", () => renderApps(search.value));
     search.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { const sel = el.querySelector(".app.sel") || el.querySelector(".app"); if (sel) sel.click(); }
+      const apps = [].slice.call(el.querySelectorAll(".app"));
+      const cur = el.querySelector(".app.sel");
+      if (e.key === "Enter") { (cur || apps[0]) && (cur || apps[0]).click(); e.preventDefault(); }
+      else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        let idx = apps.indexOf(cur);
+        idx = e.key === "ArrowDown" ? Math.min(apps.length - 1, idx + 1) : Math.max(0, idx - 1);
+        apps.forEach((a) => a.classList.remove("sel")); if (apps[idx]) { apps[idx].classList.add("sel"); apps[idx].scrollIntoView({ block: "nearest" }); }
+      }
     });
 
-    // control center
+    // control center toggles + sliders
     el.querySelector("#noc-cc").addEventListener("click", (e) => { const t = e.target.closest(".tg"); if (t) t.classList.toggle("on"); });
     const vol = el.querySelector("#noc-vol"), bri = el.querySelector("#noc-bri");
-    vol.addEventListener("input", () => (el.querySelector("#noc-volv").textContent = vol.value + "%"));
-    bri.addEventListener("input", () => (el.querySelector("#noc-briv").textContent = bri.value + "%"));
+    vol.addEventListener("input", () => { nocVolume = +vol.value; el.querySelector("#noc-volv").textContent = nocVolume + "%"; showOSD("vol", nocVolume); });
+    bri.addEventListener("input", () => { nocBright = +bri.value; el.querySelector("#noc-briv").textContent = nocBright + "%"; showOSD("bri", nocBright); });
 
     // session actions
     el.querySelector("#noc-session").addEventListener("click", (e) => {
-      const s = e.target.closest(".sess"); if (!s) return;
-      const a = s.getAttribute("data-s");
+      const sBtn = e.target.closest(".sess"); if (!sBtn) return;
+      const a = sBtn.getAttribute("data-s");
       if (a === "lock") nocLock();
       else if (a === "logout") closeNoctalia("logout");
       else if (a === "reboot") { closeNoctalia("silent"); rebootSeq(); }
@@ -3717,67 +3828,116 @@ if get_option('buildtype') == 'release'
     lockin.addEventListener("keydown", (e) => { if (e.key === "Enter") { el.querySelector("#noc-lock").classList.remove("show"); lockin.value = ""; } });
   }
 
-  function nocWidgetMsg(act) {
-    const m = {
-      media: ic("music") + " No media playing", tray: ic("grid") + " System tray — NetworkManager, PipeWire, Blueman",
-      notif: ic("bell") + " No new notifications", clip: ic("clip") + " Clipboard history — 0 items",
-      net: ic("wifi") + " Connected · enp5s0 · 192.168.1.42", bt: ic("bt") + " Bluetooth: on · 0 devices",
-      vol: ic("vol") + " Volume 62%", bri: ic("sun") + " Brightness 80%", batt: ic("batt") + " Battery 84% — 4h 12m remaining",
-    };
-    return m[act] || act;
+  function syncWorkspaces() {
+    if (!nocEl) return;
+    nocEl.querySelectorAll("#noc-ws b").forEach((b) => {
+      const n = +b.getAttribute("data-ws");
+      b.classList.toggle("on", n === nocWs);
+      b.classList.toggle("has", n !== nocWs && !!NOC_WS_OCCUPIED[n]);
+    });
+  }
+  function syncSliders() {
+    if (!nocEl) return;
+    const vol = nocEl.querySelector("#noc-vol"), bri = nocEl.querySelector("#noc-bri");
+    if (vol) { vol.value = nocVolume; nocEl.querySelector("#noc-volv").textContent = nocVolume + "%"; }
+    if (bri) { bri.value = nocBright; nocEl.querySelector("#noc-briv").textContent = nocBright + "%"; }
   }
 
+  function setPanelButtons() {
+    if (!nocEl) return;
+    const openId = NOC_PANELS.find((p) => nocEl.querySelector("#" + p).classList.contains("show"));
+    const activeAct = openId ? PANEL_BTN[openId] : null;
+    nocEl.querySelectorAll(".bar .w").forEach((w) => w.classList.toggle("active-panel", w.getAttribute("data-act") === activeAct));
+  }
   function togglePanel(id, onOpen) {
-    const panels = ["noc-launcher", "noc-cc", "noc-session"];
     const target = nocEl.querySelector("#" + id);
     const wasOpen = target.classList.contains("show");
-    panels.forEach((p) => nocEl.querySelector("#" + p).classList.remove("show"));
+    NOC_PANELS.forEach((p) => nocEl.querySelector("#" + p).classList.remove("show"));
     if (!wasOpen) { target.classList.add("show"); if (onOpen) onOpen(); }
+    setPanelButtons();
   }
-  function closePanels() { ["noc-launcher", "noc-cc", "noc-session"].forEach((p) => nocEl.querySelector("#" + p).classList.remove("show")); }
+  function closePanels() { NOC_PANELS.forEach((p) => nocEl.querySelector("#" + p).classList.remove("show")); setPanelButtons(); }
 
   function renderApps(q) {
     const list = nocEl.querySelector("#noc-apps");
     q = (q || "").trim();
-    // calculator provider
-    if (q.startsWith("/calc") || /^[\d.\s()+\-*/%]+$/.test(q) && /[+\-*/]/.test(q)) {
+    if (q.startsWith("/calc") || (/^[\d.\s()+\-*/%]+$/.test(q) && /[+\-*/]/.test(q))) {
       const expr = q.replace(/^\/calc\s*/, "");
-      let val = "";
-      try { val = String(Function('"use strict";return (' + expr + ")")()); } catch (e) { val = "…"; }
-      list.innerHTML = '<div class="app sel" data-copy="' + esc(val) + '"><div class="ico" style="background:' + NOC.tertiary + '22;color:' + NOC.tertiary + '">=</div><div><div class="nm">' + esc(expr) + " = " + esc(val) + '</div><div class="desc">Enter to copy result</div></div></div>';
+      let val = ""; try { val = String(Function('"use strict";return (' + expr + ")")()); } catch (e) { val = "…"; }
+      list.innerHTML = '<div class="app sel" data-copy="' + esc(val) + '"><div class="ico" style="background:' + NOC.tertiary + '22;color:' + NOC.tertiary + '">=</div><div><div class="nm">' + esc(expr) + " = " + esc(val) + '</div><div class="desc">calculator · Enter to copy</div></div><span class="go">↵</span></div>';
       bindApps(); return;
     }
     const hits = NOC_APPS.filter((a) => a[0].toLowerCase().includes(q.toLowerCase()));
     list.innerHTML = hits.map((a, idx) =>
-      '<div class="app' + (idx === 0 ? " sel" : "") + '" data-app="' + esc(a[0]) + '"><div class="ico" style="background:' + a[3] + '22;color:' + a[3] + '">' + a[2] + '</div><div><div class="nm">' + esc(a[0]) + '</div><div class="desc">' + esc(a[1]) + "</div></div></div>"
-    ).join("") || '<div class="app"><div class="nm" style="color:' + NOC.onSurfaceVariant + '">No results</div></div>';
+      '<div class="app' + (idx === 0 ? " sel" : "") + '" data-app="' + esc(a[0]) + '" style="animation-delay:' + (idx * 22) + 'ms"><div class="ico" style="background:' + a[3] + '22;color:' + a[3] + '">' + a[2] + '</div><div><div class="nm">' + esc(a[0]) + '</div><div class="desc">' + esc(a[1]) + "</div></div><span class=\"go\">↵</span></div>"
+    ).join("") || '<div class="app"><div class="ico" style="background:' + NOC.surfaceVariant + '">' + ic("search") + '</div><div class="nm" style="color:' + NOC.onSurfaceVariant + '">No results for “' + esc(q) + "”</div></div>";
     bindApps();
   }
   function bindApps() {
     nocEl.querySelectorAll(".app").forEach((a) => a.onclick = () => {
       const name = a.getAttribute("data-app");
-      if (a.getAttribute("data-copy") != null) { nocToast(ic("clip") + " Copied to clipboard"); closePanels(); return; }
+      if (a.getAttribute("data-copy") != null) { closePanels(); pushNotif({ icon: "📋", title: "Copied", body: "Result copied to clipboard", app: "Noctalia" }); return; }
       if (name === "Terminal") { closeNoctalia("logout"); return; }
+      if (!name) return;
       closePanels();
-      nocToast('<div class="ico" style="width:24px;height:24px;border-radius:6px;display:grid;place-items:center">' +
-        (NOC_APPS.find((x) => x[0] === name) || [,,"●"])[2] + "</div> Launching <b>" + esc(name) + "</b>…");
+      const meta = NOC_APPS.find((x) => x[0] === name) || [name, "", "●", NOC.primary];
+      pushNotif({ icon: meta[2], title: name, body: "Launching…", app: meta[1], accent: meta[3] });
     });
   }
 
-  let nocToastTimer = null;
-  function nocToast(html) {
+  // ---- OSD (volume / brightness) ----
+  let osdTimer = null;
+  function showOSD(kind, val) {
+    if (!nocEl) return;
     const o = nocEl.querySelector("#noc-osd");
-    o.innerHTML = html;
+    o.querySelector(".ico").innerHTML = ic(kind === "bri" ? "sun" : (val === 0 ? "vol" : "vol"));
+    o.querySelector(".fill").style.width = val + "%";
+    o.querySelector(".pct").textContent = val + "%";
     o.classList.add("show");
-    clearTimeout(nocToastTimer);
-    nocToastTimer = setTimeout(() => o.classList.remove("show"), 2200);
+    clearTimeout(osdTimer);
+    osdTimer = setTimeout(() => o.classList.remove("show"), 1500);
   }
+
+  // ---- notifications ----
+  function pushNotif(n) {
+    if (!nocEl) return;
+    const wrap = nocEl.querySelector("#noc-notifs");
+    const card = document.createElement("div");
+    card.className = "notif";
+    const accent = n.accent || NOC.primary;
+    card.innerHTML =
+      '<div class="nico" style="background:' + accent + '22;color:' + accent + '">' + (n.icon || "🔔") + "</div>" +
+      '<div style="min-width:0"><div class="ntitle">' + esc(n.title || "") + "</div>" +
+      (n.body ? '<div class="nbody">' + esc(n.body) + "</div>" : "") +
+      (n.app ? '<div class="napp">' + esc(n.app) + "</div>" : "") + "</div>";
+    wrap.appendChild(card);
+    requestAnimationFrame(() => requestAnimationFrame(() => card.classList.add("show")));
+    const dismiss = () => { card.classList.remove("show"); card.classList.add("out"); setTimeout(() => card.remove(), 360); };
+    card.addEventListener("click", dismiss);
+    setTimeout(dismiss, 4800);
+  }
+
+  function renderCalendar() {
+    if (!nocEl) return;
+    const now = new Date();
+    const y = now.getFullYear(), m = now.getMonth(), today = now.getDate();
+    const first = new Date(y, m, 1).getDay();
+    const days = new Date(y, m + 1, 0).getDate();
+    const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    let cells = "";
+    ["S", "M", "T", "W", "T", "F", "S"].forEach((d) => cells += '<div class="dow">' + d + "</div>");
+    for (let i = 0; i < first; i++) cells += '<div class="d pad"></div>';
+    for (let d = 1; d <= days; d++) cells += '<div class="d' + (d === today ? " today" : "") + '">' + d + "</div>";
+    nocEl.querySelector("#noc-cal").innerHTML =
+      '<div class="cal-top"><span class="m">' + months[m] + '</span><span class="y">' + y + "</span></div>" +
+      '<div class="cal-grid">' + cells + "</div>";
+  }
+
   function nocLock() {
     closePanels();
-    const l = nocEl.querySelector("#noc-lock");
     nocTickLock();
-    l.classList.add("show");
-    setTimeout(() => nocEl.querySelector("#noc-lock-in").focus(), 30);
+    nocEl.querySelector("#noc-lock").classList.add("show");
+    setTimeout(() => nocEl.querySelector("#noc-lock-in").focus(), 60);
   }
   function nocTickLock() {
     if (!nocEl) return;
@@ -3786,7 +3946,6 @@ if get_option('buildtype') == 'release'
     if (t) t.textContent = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
     if (d) d.textContent = now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   }
-
   function nocTick() {
     if (!nocEl) return;
     const now = new Date();
@@ -3798,19 +3957,23 @@ if get_option('buildtype') == 'release'
 
   async function launchNoctalia() {
     if (!noctaliaInstalled) { out('<span class="fail">noctalia: command not found</span>'); LAST_STATUS = 127; return; }
-    // generate default config on first run (real path)
     if (readFileAt("/home/" + USER + "/.config/noctalia/config.toml") == null) {
       writeFileAt("/home/" + USER + "/.config/noctalia/config.toml", bundled("noc-config"));
       out('<span class="muted">Noctalia: no config found — wrote defaults to ~/.config/noctalia/config.toml</span>');
       persist();
     }
-    out('<span class="muted">Starting Noctalia ' + NOC_VERSION + " (Wayland shell)… press </span><span class=\"arch-b\">Esc</span><span class=\"muted\"> to close panels; session → Log Out to return here.</span>");
+    out('<span class="muted">Starting Noctalia ' + NOC_VERSION + " (Wayland shell)…  </span><span class=\"arch-b\">Esc</span><span class=\"muted\"> closes panels · session → Log&nbsp;Out returns here.</span>");
     buildNoctalia();
+    syncSliders();
+    // force reflow so the entrance transition plays
+    void nocEl.offsetWidth;
     nocEl.classList.add("open");
     noctaliaOpen = true;
     nocTick();
     if (!nocClock) nocClock = setInterval(nocTick, 1000);
-    setTimeout(() => { const w = nocEl.querySelector("#noc-welcome"); if (w) { w.style.transition = "opacity 1s"; w.style.opacity = "0.0"; } }, 4200);
+    // welcome greeting notification, then fade the welcome card
+    setTimeout(() => pushNotif({ icon: "🌙", title: "Welcome to Noctalia", body: "A sleek, customizable desktop shell crafted for Wayland.", app: "Noctalia " + NOC_VERSION }), 900);
+    setTimeout(() => { const w = nocEl.querySelector("#noc-welcome"); if (w) { w.style.transition = "opacity .8s"; w.style.opacity = "0"; } }, 5200);
   }
   function closeNoctalia(mode) {
     if (!nocEl) return;
@@ -3827,12 +3990,14 @@ if get_option('buildtype') == 'release'
     }
   }
   function nocKey(e) {
+    if (nocEl.querySelector("#noc-lock").classList.contains("show")) return;
     if (e.key === "Escape") {
-      if (nocEl.querySelector("#noc-lock").classList.contains("show")) return;
-      const anyPanel = ["noc-launcher", "noc-cc", "noc-session"].some((p) => nocEl.querySelector("#" + p).classList.contains("show"));
+      const anyPanel = NOC_PANELS.some((p) => nocEl.querySelector("#" + p).classList.contains("show"));
       if (anyPanel) { closePanels(); e.preventDefault(); }
+    } else if (e.key === "l" && e.ctrlKey) { e.preventDefault(); nocLock(); }
+    else if ((e.key === "/" || (e.key === " " && e.metaKey)) && !NOC_PANELS.some((p) => nocEl.querySelector("#" + p).classList.contains("show"))) {
+      e.preventDefault(); togglePanel("noc-launcher", () => { const s = nocEl.querySelector("#noc-search"); s.value = ""; renderApps(""); setTimeout(() => s.focus(), 30); });
     }
-    if ((e.key === "l" || e.key === "L") && e.ctrlKey) { e.preventDefault(); nocLock(); }
   }
 
   // ------------------------------------------------------ register new commands
