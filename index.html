@@ -2049,10 +2049,11 @@ if get_option('buildtype') == 'release'
         ["packages", "pacman -Syu · pacman -S <pkg> · pacman -Q · pacman -Ss <q>"],
         ["★ noctalia", "sudo pacman -S noctalia-shell   then:  noctalia   (launch the real desktop shell)"],
         ["git", "git init/clone/add/commit/status/log/branch/checkout/config"],
-        ["build & run", "gcc file.c -o out · ./out · make · node file.js · node -e '…' · bash script.sh"],
-        ["files", "ls cd pwd cat mkdir touch rm mv cp tree head tail grep wc sort find stat  |  > >> pipes"],
+        ["build & run", "gcc -Wall -c -o -v · ./out · make · node file.js · node -e '…' · bash script.sh"],
+        ["files", "ls cd cd- pwd cat mkdir touch rm mv cp tree head tail grep wc sort cut find stat chmod du"],
+        ["text", "echo printf seq basename dirname rev nl uniq  |  > >>  &&  ||  $(...)"],
         ["editor / web", "nano vim open xdg-open firefox"],
-        ["shell", "clear history alias export which man sudo reboot poweroff reset-fs help"],
+        ["shell", "clear history alias unalias type export which man ps sudo reboot poweroff reset-fs help"],
       ];
       for (const [g, cmds] of groups)
         out('  <span class="ff-key">' + pad(g, 14) + "</span>" + esc(cmds));
@@ -2623,6 +2624,9 @@ if get_option('buildtype') == 'release'
   const ALIASES = { ll: "ls -lah", la: "ls -a", "..": "cd ..", grep: "grep --color=auto", ls: "ls --color=auto" };
   const INSTALLED = {}; // extra packages installed at runtime (name -> version)
   let noctaliaInstalled = false;
+  let ggrInstalled = false;   // custom command-launcher installed
+  let gameMode = false;       // game mode toggled on
+  let pendingConfirm = null;  // callback awaiting a Y/N answer on the next line
   let LAST_STATUS = 0;
   let CURRENT_STDIN = null;
 
@@ -2637,6 +2641,7 @@ if get_option('buildtype') == 'release'
           localStorage.setItem(FS_KEY, JSON.stringify({
             v: NOC_VERSION + "|3", root: root, cwd: cwd, env: ENV, aliases: ALIASES,
             installed: INSTALLED, noctalia: noctaliaInstalled,
+            ggr: ggrInstalled, game: gameMode,
             history: HISTORY.slice(-800), git: GITREPOS, gitcfg: GITCONFIG,
           }));
         } catch (e) { /* private mode / quota — ignore */ }
@@ -2655,6 +2660,8 @@ if get_option('buildtype') == 'release'
       Object.assign(ALIASES, s.aliases || {});
       Object.assign(INSTALLED, s.installed || {});
       noctaliaInstalled = !!s.noctalia;
+      ggrInstalled = !!s.ggr;
+      gameMode = !!s.game;
       if (Array.isArray(s.history)) { HISTORY.length = 0; s.history.forEach((h) => HISTORY.push(h)); histIdx = HISTORY.length; }
       if (s.git) Object.assign(GITREPOS, s.git);
       if (s.gitcfg) Object.assign(GITCONFIG, s.gitcfg);
@@ -2952,6 +2959,81 @@ if get_option('buildtype') == 'release'
   // main, functions, int/long/char/float/double/arrays, printf/puts/putchar,
   // arithmetic/loops/conditionals. Not a full ISO C — enough to genuinely
   // compile and run real programs (hello world, loops, recursion, ...).
+  // --- diagnostics: emulate the diagnostics a real gcc frontend prints -------
+  function emitCDiag(file, d, level, srcLines) {
+    const color = level === "error" ? "fail" : (level === "warning" ? "magenta" : "cyan");
+    out('<span class="b">' + esc(file) + ":" + d.line + ":" + d.col + ":</span> " +
+        '<span class="' + color + ' b">' + level + ":</span> " + esc(d.msg) +
+        (d.flag ? ' <span class="muted">[' + esc(d.flag) + "]</span>" : ""));
+    const ln = srcLines[d.line - 1];
+    if (ln != null) {
+      const gutter = String(d.line).padStart(5, " ");
+      out('<span class="cyan">' + gutter + " |</span> " + esc(ln));
+      out('<span class="cyan">' + " ".repeat(5) + " |</span> " + " ".repeat(Math.max(0, d.col - 1)) + '<span class="fail">^</span>');
+    }
+  }
+  function diagnoseC(src) {
+    const errors = [], warnings = [];
+    const raw = src.split("\n");
+    const noC = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " ")).replace(/\/\/[^\n]*/g, "");
+    const cLines = noC.split("\n");
+    // unterminated string literal (strings can't span physical lines in C)
+    cLines.forEach((ln, i) => {
+      let esc2 = false, q = 0, firstQ = -1;
+      for (let k = 0; k < ln.length; k++) { const ch = ln[k]; if (esc2) { esc2 = false; continue; } if (ch === "\\") { esc2 = true; continue; } if (ch === '"') { if (firstQ < 0) firstQ = k; q++; } }
+      if (q % 2 === 1) errors.push({ line: i + 1, col: firstQ + 1, msg: 'missing terminating " character' });
+    });
+    // brace balance (ignoring strings/chars)
+    const stripped = noC.replace(/"(\\.|[^"\\])*"/g, '""').replace(/'(\\.|[^'\\])*'/g, "''");
+    const sLines = stripped.split("\n");
+    let depth = 0;
+    sLines.forEach((ln, i) => { for (let k = 0; k < ln.length; k++) { if (ln[k] === "{") depth++; else if (ln[k] === "}") { depth--; if (depth < 0) { errors.push({ line: i + 1, col: k + 1, msg: "expected declaration or statement before ‘}’ token" }); depth = 0; } } } });
+    if (depth > 0) errors.push({ line: raw.length, col: (raw[raw.length - 1] || "").length + 1, msg: "expected ‘}’ at end of input" });
+    const hasMain = /\bmain\s*\(/.test(stripped);
+    // implicit-declaration warnings when the matching header isn't included
+    const libByHeader = {
+      "stdio.h": ["printf", "scanf", "puts", "putchar", "getchar", "fprintf", "sprintf", "fgets", "fopen", "fclose", "fputs"],
+      "stdlib.h": ["malloc", "free", "calloc", "realloc", "atoi", "atof", "rand", "srand", "exit", "abs", "qsort"],
+      "string.h": ["strlen", "strcmp", "strcpy", "strcat", "strncmp", "memcpy", "memset", "strchr"],
+      "math.h": ["sqrt", "pow", "sin", "cos", "tan", "floor", "ceil", "fabs", "log", "exp"],
+    };
+    for (const h in libByHeader) {
+      if (new RegExp("#\\s*include\\s*<" + h.replace(".", "\\.") + ">").test(src)) continue;
+      for (const fn of libByHeader[h]) {
+        const re = new RegExp("\\b" + fn + "\\s*\\(");
+        const li = sLines.findIndex((l) => re.test(l));
+        if (li >= 0) warnings.push({ line: li + 1, col: sLines[li].search(new RegExp("\\b" + fn)) + 1, msg: "implicit declaration of function ‘" + fn + "’", flag: "-Wimplicit-function-declaration" });
+      }
+    }
+    return { errors: errors, warnings: warnings, hasMain: hasMain, srcLines: raw };
+  }
+  // when the transpiled JS won't parse, locate a likely C mistake (missing ;)
+  function findLikelyCError(src) {
+    const stripped = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " ")).replace(/\/\/[^\n]*/g, "")
+      .replace(/"(\\.|[^"\\])*"/g, '""').replace(/'(\\.|[^'\\])*'/g, "''");
+    const lines = stripped.split("\n");
+    let depth = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const t = lines[i].replace(/\s+$/, "");
+      const trimmed = t.trim();
+      const opens = (t.match(/{/g) || []).length, closes = (t.match(/}/g) || []).length;
+      const inBody = depth > 0;
+      depth += opens - closes;
+      if (!inBody || !trimmed) continue;
+      if (/^(if|for|while|switch|else|do|case|default)\b/.test(trimmed)) continue;
+      if (/[;{}:,\\]$/.test(trimmed)) continue;
+      if (/[-+*/%=<>&|^!?.]$/.test(trimmed)) continue;      // line continues into next
+      if (/^[})]/.test(trimmed) || trimmed === "}") continue;
+      if (/[\w\])"']$/.test(trimmed) || /\breturn\b/.test(trimmed)) {
+        // find next token for the message
+        let nxt = "}";
+        for (let j = i + 1; j < lines.length; j++) { const n = lines[j].trim(); if (n) { nxt = n[0]; break; } }
+        return { line: i + 1, col: t.length + 1, msg: "expected ‘;’ before ‘" + nxt + "’ token" };
+      }
+    }
+    return { line: 1, col: 1, msg: "expected expression" };
+  }
+
   function compileC(src) {
     try {
       let s = src;
@@ -2990,8 +3072,9 @@ if get_option('buildtype') == 'release'
       // io builtins
       s = s.replace(/\bprintf\s*\(/g, "__printf(").replace(/\bputs\s*\(/g, "__puts(")
            .replace(/\bputchar\s*\(/g, "__putchar(").replace(/\bfprintf\s*\(\s*[A-Za-z_]\w*\s*,/g, "__printf(");
-      // strlen basic
-      s = s.replace(/\bstrlen\s*\(/g, "__strlen(");
+      s = s.replace(/\bstrlen\s*\(/g, "__strlen(").replace(/\bgetchar\s*\(\s*\)/g, "__getchar()");
+      // scanf/gets can't read input here — neutralize to a no-op expression
+      s = s.replace(/\b(scanf|gets|fgets|fscanf)\s*\([^;]*\)/g, "0");
       return { ok: true, js: s };
     } catch (e) { return { ok: false, error: String(e) }; }
   }
@@ -3025,11 +3108,12 @@ if get_option('buildtype') == 'release'
     const __puts = (s) => collect((s == null ? "" : String(s)) + "\n");
     const __putchar = (c) => collect(String.fromCharCode(Number(c)));
     const __strlen = (s) => (s == null ? 0 : String(s).length);
+    const __getchar = () => -1;
     let ret = 0;
     try {
-      const fn = new Function("__printf", "__puts", "__putchar", "__strlen",
+      const fn = new Function("__printf", "__puts", "__putchar", "__strlen", "__getchar",
         '"use strict";\n' + jsCode + "\n;return (typeof main==='function')?main():0;");
-      ret = fn(__printf, __puts, __putchar, __strlen);
+      ret = fn(__printf, __puts, __putchar, __strlen, __getchar);
     } catch (e) {
       buffer.split("\n").forEach((l, i, a) => { if (!(i === a.length - 1 && l === "")) outText(l); });
       outText("Segmentation fault (core dumped)  [" + (e && e.message ? e.message : e) + "]");
@@ -3039,23 +3123,107 @@ if get_option('buildtype') == 'release'
     buffer.split("\n").forEach((l, i, a) => { if (!(i === a.length - 1 && l === "")) outText(l); });
     LAST_STATUS = (ret | 0) || 0;
   }
+  const GCC_VER = "14.2.1";
+  const CC_TARGET = "x86_64-pc-linux-gnu";
+  // Authentic gcc pipeline: cpp -> cc1 -> as -> collect2/ld. Diagnostics use the
+  // real gcc format; success is silent (unless -v); -c stops at objects.
   function runGcc(args, cxx) {
-    const files = args.filter((a) => !a.startsWith("-"));
+    const prog = cxx ? "g++" : "gcc";
+    const cc1 = cxx ? "cc1plus" : "cc1";
+    const opts = args.filter((a) => a.startsWith("-"));
     const oi = args.indexOf("-o");
-    const outName = oi >= 0 ? args[oi + 1] : "a.out";
-    const srcFile = files.find((f) => /\.(c|cc|cpp|cxx)$/.test(f)) || files[0];
-    if (!srcFile) { outText((cxx ? "g++" : "gcc") + ": fatal error: no input files\ncompilation terminated."); LAST_STATUS = 1; return; }
-    const src = readFileAt(srcFile);
-    if (src == null) { outText((cxx ? "g++" : "gcc") + ": error: " + srcFile + ": No such file or directory"); LAST_STATUS = 1; return; }
-    const c = compileC(src);
-    if (!c.ok) { outText(srcFile + ": error: " + c.error); LAST_STATUS = 1; return; }
-    writeFileAt(absOf(cwd) + "/" + outName.replace(/^\.\//, ""), src, { exe: true, compiled: c.js });
+    const oVal = oi >= 0 ? args[oi + 1] : null;
+    const inputs = args.filter((a, idx) => !a.startsWith("-") && !(oi >= 0 && idx === oi + 1));
+    const verbose = opts.includes("-v");
+    const wall = opts.includes("-Wall") || opts.includes("-Wextra") || opts.includes("-W");
+    const compileOnly = opts.includes("-c");
+
+    if (verbose) {
+      out("Using built-in specs.");
+      out("COLLECT_GCC=" + prog);
+      out("Target: " + CC_TARGET);
+      out("Configured with: /build/gcc/src/gcc/configure --prefix=/usr --enable-languages=c,c++ ...");
+      out("Thread model: posix");
+      out("Supported LTO compression algorithms: zlib zstd");
+      out("gcc version " + GCC_VER + " (GCC)");
+    }
+    if (!inputs.length) { outText(prog + ": fatal error: no input files"); outText("compilation terminated."); LAST_STATUS = 1; return; }
+
+    const objects = [];
+    for (const f of inputs) {
+      if (/\.o$/.test(f)) {
+        const r = resolve(f);
+        if (!r.node) { outText(prog + ": error: " + f + ": No such file or directory"); LAST_STATUS = 1; return; }
+        objects.push({ js: r.node.compiled || "", hasMain: !!r.node.hasMain, name: f }); continue;
+      }
+      if (!/\.(c|cc|cpp|cxx|c\+\+|C)$/.test(f)) { outText(prog + ": warning: " + f + ": linker input file unused because linking not done"); continue; }
+      const src = readFileAt(f);
+      if (src == null) { outText(prog + ": error: " + f + ": No such file or directory"); LAST_STATUS = 1; return; }
+      const base = f.replace(/\.[^.]+$/, "");
+      if (verbose) { out(" /usr/lib/gcc/" + CC_TARGET + "/" + GCC_VER + "/" + cc1 + " -quiet " + f + " -o /tmp/" + base + ".s"); }
+      const diag = diagnoseC(src);
+      const funcContext = diag.hasMain ? "main" : null;
+      let printedCtx = false;
+      const ctx = () => { if (funcContext && !printedCtx) { out('<span class="b">' + esc(f) + ":</span> In function ‘" + funcContext + "’:"); printedCtx = true; } };
+      if (wall) diag.warnings.forEach((w) => { ctx(); emitCDiag(f, w, "warning", diag.srcLines); });
+      if (diag.errors.length) { diag.errors.forEach((e) => { ctx(); emitCDiag(f, e, "error", diag.srcLines); }); LAST_STATUS = 1; return; }
+      const c = compileC(src);
+      let vErr = null;
+      try { new Function("__printf", "__puts", "__putchar", "__strlen", "__getchar", c.js); } catch (e) { vErr = e; }
+      if (vErr) { ctx(); emitCDiag(f, findLikelyCError(src), "error", diag.srcLines); LAST_STATUS = 1; return; }
+      if (verbose) out(" as --64 -o /tmp/" + base + ".o /tmp/" + base + ".s");
+      objects.push({ js: c.js, hasMain: diag.hasMain, name: base + ".o", srcName: f });
+      if (compileOnly) {
+        const oName = oVal || (base + ".o");
+        writeFileAt(absOf(cwd) + "/" + oName.replace(/^\.\//, ""), "ELF relocatable object — compiled from " + f + "\n", { object: true, compiled: c.js, hasMain: diag.hasMain });
+      }
+    }
+    if (compileOnly) { persist(); LAST_STATUS = 0; return; }
+
+    // link stage
+    if (verbose) out(" /usr/lib/gcc/" + CC_TARGET + "/" + GCC_VER + "/collect2 -o " + (oVal || "a.out") + " /usr/lib/crt1.o " + objects.map((o) => o.name).join(" ") + " -lc");
+    if (!objects.some((o) => o.hasMain)) {
+      out('<span class="fail">/usr/bin/ld:</span> /usr/lib/crt1.o: in function ‘_start’:');
+      out("(.text+0x1b): undefined reference to ‘main’");
+      out('<span class="fail">collect2:</span> error: ld returned 1 exit status');
+      LAST_STATUS = 1; return;
+    }
+    const outName = oVal || "a.out";
+    writeFileAt(absOf(cwd) + "/" + outName.replace(/^\.\//, ""), "ELF 64-bit LSB pie executable, x86-64\n", { exe: true, compiled: objects.map((o) => o.js).join("\n") });
     persist();
-    LAST_STATUS = 0; // silent success, like a real compiler
+    LAST_STATUS = 0;
   }
-  function runMake() {
-    // find a C source in cwd and build it (honours a trivial Makefile target)
+
+  function runMake(args) {
     const node = nodeAt(cwd);
+    const mkName = ["Makefile", "makefile", "GNUmakefile"].find((n) => node.children[n]);
+    const wantTarget = (args || []).find((a) => !a.startsWith("-"));
+    if (mkName) {
+      const mk = node.children[mkName].content || "";
+      const vars = {};
+      mk.replace(/^(\w+)\s*[:?]?=\s*(.*)$/gm, (m, k, v) => { vars[k] = v.trim(); return m; });
+      const expand = (s) => s.replace(/\$[({](\w+)[)}]/g, (_, k) => vars[k] || "");
+      // parse rules: target: deps \n \t recipe...
+      const rules = {};
+      const re = /^([A-Za-z0-9_.\/%$(){} -]+):[ \t]*([^\n]*)\n((?:\t[^\n]*\n?)+)/gm;
+      let m, first = null;
+      while ((m = re.exec(mk))) { const tgt = expand(m[1].trim()); if (!first) first = tgt; rules[tgt] = { deps: m[2].trim(), recipe: m[3].split("\n").filter((l) => l.startsWith("\t")).map((l) => expand(l.slice(1))) }; }
+      const target = wantTarget || first;
+      if (!target || (!rules[target] && !readFileAt(target))) { outText("make: *** No rule to make target '" + (target || "") + "'.  Stop."); LAST_STATUS = 2; return; }
+      const rule = rules[target];
+      if (!rule) { outText("make: '" + target + "' is up to date."); return; }
+      for (const line of rule.recipe) {
+        const silent = line.startsWith("@");
+        const cmd = silent ? line.slice(1) : line;
+        if (!silent) out(cmd);
+        const toks = tokenize(expandVars(cmd));
+        if (/^(gcc|cc|g\+\+|clang)$/.test(toks[0])) { runGcc(toks.slice(1), /\+\+/.test(toks[0])); if (LAST_STATUS !== 0) { out("make: *** [" + mkName + ":" + target + "] Error " + LAST_STATUS); return; } }
+        else if (toks[0] === "rm") { commands.rm(toks.slice(1)); }
+        else if (toks[0] === "echo") { commands.echo(toks.slice(1), cmd); }
+      }
+      return;
+    }
+    // implicit rule from a lone C source
     const cfile = Object.keys(node.children).find((n) => /\.c$/.test(n));
     if (!cfile) { outText("make: *** No targets specified and no makefile found.  Stop."); LAST_STATUS = 2; return; }
     const target = cfile.replace(/\.c$/, "");
@@ -3490,7 +3658,6 @@ if get_option('buildtype') == 'release'
   let noctaliaOpen = false;
   let nocEl = null, nocClock = null;
   let nocVolume = 62, nocBright = 80, nocWs = 1;
-  const NOC_WS_OCCUPIED = { 1: true, 2: true, 4: false };
   // Noctalia easing set -> CSS cubic-beziers
   const EZ = {
     quad: "cubic-bezier(.25,.46,.45,.94)",
@@ -3561,7 +3728,6 @@ if get_option('buildtype') == 'release'
       "#noctalia .bar .start{flex:1 1 0;justify-content:flex-start;}",
       "#noctalia .bar .center{flex:0 0 auto;}",
       "#noctalia .bar .end{flex:1 1 0;justify-content:flex-end;}",
-      "@media(max-width:1180px){#noctalia .media-chip .t{display:none;}#noctalia .tray{display:none;}}",
       "#noctalia .w{display:flex;align-items:center;justify-content:center;gap:6px;height:24px;min-width:24px;padding:0 7px;border-radius:8px;color:" + on + ";cursor:pointer;font-size:12.5px;font-weight:500;line-height:1;background:transparent;border:0;font-family:inherit;transition:background .14s " + EZ.quad + ",transform .14s " + EZ.back + ",color .14s;}",
       "#noctalia .w:hover{background:" + sv + ";}",
       "#noctalia .w:active{transform:scale(.9);}",
@@ -3572,16 +3738,10 @@ if get_option('buildtype') == 'release'
       "#noctalia .w.active-panel{background:" + sv + ";}",
       "#noctalia .clock{font-weight:600;letter-spacing:.01em;color:" + on + ";font-variant-numeric:tabular-nums;}",
       "#noctalia .clock .date{color:" + onv + ";font-weight:400;margin-left:8px;}",
-      "#noctalia .media-chip{max-width:190px;overflow:hidden;}",
-      "#noctalia .media-chip .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:" + onv + ";font-weight:400;}",
-      "#noctalia .tray{display:flex;align-items:center;gap:2px;color:" + onv + ";}",
-      "#noctalia .tray svg{width:15px;height:15px;}",
       // workspaces (pill morph)
       "#noctalia .ws{display:flex;align-items:center;gap:6px;padding:0 4px;}",
       "#noctalia .ws b{width:8px;height:8px;border-radius:99px;background:" + out + ";cursor:pointer;transition:width .34s " + EZ.back + ",background .25s " + EZ.quad + ";}",
-      "#noctalia .ws b.has{background:" + onv + ";}",
       "#noctalia .ws b.on{background:" + pri + ";width:24px;}",
-      "#noctalia .batt{color:" + NOC.tertiary + ";font-weight:600;font-variant-numeric:tabular-nums;}",
       // panels — animate in AND out (EaseOutBack pop)
       "#noctalia .panel{position:absolute;z-index:78;background:" + NOC.surface + "f7;border:1px solid " + out + "cc;border-radius:18px;box-shadow:0 26px 74px #000000b0,inset 0 1px 0 #ffffff0a;backdrop-filter:blur(18px) saturate(1.2);overflow:hidden;opacity:0;visibility:hidden;transform:translateY(-10px) scale(.97);transform-origin:top center;transition:opacity .18s " + EZ.quad + ",transform .28s " + EZ.back + ",visibility 0s .28s;}",
       "#noctalia .panel.show{opacity:1;visibility:visible;transform:translateY(0) scale(1);transition:opacity .2s " + EZ.quad + ",transform .3s " + EZ.back + ";}",
@@ -3636,17 +3796,6 @@ if get_option('buildtype') == 'release'
       "#noctalia .cal-grid .d{font-size:12.5px;padding:6px 0;border-radius:8px;color:" + on + ";}",
       "#noctalia .cal-grid .d.today{background:" + pri + ";color:" + NOC.onPrimary + ";font-weight:700;}",
       "#noctalia .cal-grid .d.pad{color:" + onv + "66;}",
-      // welcome card
-      "#noctalia .welcome{position:absolute;top:44%;left:50%;transform:translate(-50%,-50%);text-align:center;max-width:520px;padding:20px;display:flex;flex-direction:column;align-items:center;opacity:0;transition:opacity .6s " + EZ.quad + " .25s,transform .6s " + EZ.back + " .25s;}",
-      "#noctalia.open .welcome{opacity:1;}",
-      "#noctalia .welcome .logo{width:96px;height:96px;margin:0 auto 16px;filter:drop-shadow(0 8px 34px " + pri + "45);animation:nocfloat 5s ease-in-out infinite;}",
-      "@keyframes nocfloat{0%,100%{transform:translateY(0);}50%{transform:translateY(-7px);}}",
-      "#noctalia .welcome .logo svg{width:100%;height:100%;display:block;}",
-      "#noctalia .welcome h1{font-size:30px;font-weight:700;margin:0 0 3px;letter-spacing:-.02em;color:" + pri + ";}",
-      "#noctalia .welcome .v{color:" + onv + ";font-size:13px;margin-bottom:16px;}",
-      "#noctalia .welcome .tips{background:" + NOC.surface + "d9;border:1px solid " + out + "aa;border-radius:16px;padding:14px 18px;text-align:left;font-size:13px;color:" + onv + ";line-height:1.75;}",
-      "#noctalia .welcome .tips b{color:" + on + ";font-weight:600;}",
-      "#noctalia .welcome .tips .k{color:" + pri + ";font-weight:600;}",
       // OSD (bottom center pill) — volume / brightness
       "#noctalia .osd{position:absolute;bottom:56px;left:50%;transform:translateX(-50%) translateY(16px);background:" + NOC.surface + "f2;border:1px solid " + out + "cc;border-radius:20px;padding:12px 18px;display:flex;align-items:center;gap:14px;box-shadow:0 14px 44px #000b;opacity:0;visibility:hidden;transition:opacity .2s " + EZ.quad + ",transform .28s " + EZ.back + ",visibility 0s .28s;min-width:230px;}",
       "#noctalia .osd.show{opacity:1;visibility:visible;transform:translateX(-50%) translateY(0);transition:opacity .2s " + EZ.quad + ",transform .28s " + EZ.back + ";}",
@@ -3696,16 +3845,6 @@ if get_option('buildtype') == 'release'
     el.innerHTML =
       '<div class="wall"></div><div class="grain"></div>' +
       '<div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>' +
-      '<div class="welcome" id="noc-welcome">' +
-        '<div class="logo">' + bundled("noc-svg") + "</div>" +
-        "<h1>Noctalia</h1>" +
-        '<div class="v">v' + NOC_VERSION + " · native Wayland shell · reproduced from the real palette &amp; layout</div>" +
-        '<div class="tips">' +
-          'Open the <b>launcher</b> <span class="k">(top-left grid)</span> — search apps or type <span class="k">/calc&nbsp;21*2</span>.<br>' +
-          'Open the <b>control center</b> <span class="k">(gear)</span>; scroll the <b>volume</b>/<b>brightness</b> widgets for OSDs.<br>' +
-          'Click the <b>clock</b> for the calendar, <b>session</b> <span class="k">(⏻)</span> → <b>Log Out</b> to return to the terminal.' +
-        "</div>" +
-      "</div>" +
       '<div class="bar">' +
         '<div class="sec start">' +
           '<button class="w accent" data-act="launcher" title="Launcher (Super)">' + ic("grid") + "</button>" +
@@ -3714,15 +3853,12 @@ if get_option('buildtype') == 'release'
         "</div>" +
         '<div class="sec center"><button class="w" data-act="clock" title="Calendar"><span class="clock" id="noc-clock"></span></button></div>' +
         '<div class="sec end">' +
-          '<button class="w media-chip" data-act="media" title="Media"><span>' + ic("music") + '</span><span class="t">Weightless — Marconi Union</span></button>' +
-          '<span class="tray" title="System tray">' + ic("wifi") + ic("vol") + ic("bt") + "</span>" +
           '<button class="w" data-act="notif" title="Notifications">' + ic("bell") + "</button>" +
           '<button class="w" data-act="clip" title="Clipboard">' + ic("clip") + "</button>" +
           '<button class="w" data-act="net" title="Network">' + ic("wifi") + "</button>" +
           '<button class="w" data-act="bt" title="Bluetooth">' + ic("bt") + "</button>" +
-          '<button class="w" data-act="vol" title="Volume (scroll)">' + ic("vol") + "</button>" +
-          '<button class="w" data-act="bri" title="Brightness (scroll)">' + ic("sun") + "</button>" +
-          '<button class="w batt" data-act="batt" title="Battery"><span>84%</span></button>' +
+          '<button class="w" data-act="vol" title="Volume (scroll to change)">' + ic("vol") + "</button>" +
+          '<button class="w" data-act="bri" title="Brightness (scroll to change)">' + ic("sun") + "</button>" +
           '<button class="w" data-act="cc" title="Control Center">' + ic("settings") + "</button>" +
           '<button class="w" data-act="session" title="Session">' + ic("power") + "</button>" +
         "</div>" +
@@ -3762,7 +3898,7 @@ if get_option('buildtype') == 'release'
 
     // workspaces (pill morph)
     const ws = el.querySelector("#noc-ws");
-    ws.innerHTML = [1, 2, 3, 4, 5].map((n) => '<b class="' + (n === nocWs ? "on" : NOC_WS_OCCUPIED[n] ? "has" : "") + '" data-ws="' + n + '"></b>').join("");
+    ws.innerHTML = [1, 2, 3, 4, 5].map((n) => '<b class="' + (n === nocWs ? "on" : "") + '" data-ws="' + n + '"></b>').join("");
     ws.addEventListener("click", (e) => { const b = e.target.closest("b"); if (!b) return; nocWs = +b.getAttribute("data-ws"); syncWorkspaces(); });
 
     // bar actions
@@ -3773,15 +3909,10 @@ if get_option('buildtype') == 'release'
       else if (act === "cc") togglePanel("noc-cc");
       else if (act === "session") togglePanel("noc-session");
       else if (act === "clock") togglePanel("noc-cal", renderCalendar);
-      else if (act === "wallpaper") pushNotif({ icon: "🖼", title: "Wallpaper", body: "12 wallpapers available in ~/Pictures/wallpapers", app: "Noctalia" });
       else if (act === "vol") showOSD("vol", nocVolume);
       else if (act === "bri") showOSD("bri", nocBright);
-      else if (act === "net") pushNotif({ icon: "📶", title: "Network", body: "Connected · enp5s0 · 192.168.1.42/24", app: "NetworkManager" });
-      else if (act === "bt") pushNotif({ icon: "🔵", title: "Bluetooth", body: "On · 0 devices connected", app: "BlueZ" });
-      else if (act === "media") pushNotif({ icon: "🎵", title: "Weightless", body: "Marconi Union — Ambient", app: "MPRIS" });
-      else if (act === "clip") pushNotif({ icon: "📋", title: "Clipboard", body: "History is empty", app: "Noctalia" });
-      else if (act === "notif") pushNotif({ icon: "🔔", title: "Notifications", body: "You're all caught up", app: "Noctalia" });
-      else if (act === "batt") pushNotif({ icon: "🔋", title: "Battery 84%", body: "Discharging · about 4h 12m remaining", app: "UPower" });
+      // network / bluetooth / notifications / clipboard open the control center hub
+      else if (act === "net" || act === "bt" || act === "notif" || act === "clip") togglePanel("noc-cc");
     });
     // scroll to change volume / brightness on their bar widgets
     el.querySelectorAll('[data-act="vol"],[data-act="bri"]').forEach((b) => b.addEventListener("wheel", (e) => {
@@ -3831,9 +3962,7 @@ if get_option('buildtype') == 'release'
   function syncWorkspaces() {
     if (!nocEl) return;
     nocEl.querySelectorAll("#noc-ws b").forEach((b) => {
-      const n = +b.getAttribute("data-ws");
-      b.classList.toggle("on", n === nocWs);
-      b.classList.toggle("has", n !== nocWs && !!NOC_WS_OCCUPIED[n]);
+      b.classList.toggle("on", +b.getAttribute("data-ws") === nocWs);
     });
   }
   function syncSliders() {
@@ -3971,9 +4100,6 @@ if get_option('buildtype') == 'release'
     noctaliaOpen = true;
     nocTick();
     if (!nocClock) nocClock = setInterval(nocTick, 1000);
-    // welcome greeting notification, then fade the welcome card
-    setTimeout(() => pushNotif({ icon: "🌙", title: "Welcome to Noctalia", body: "A sleek, customizable desktop shell crafted for Wayland.", app: "Noctalia " + NOC_VERSION }), 900);
-    setTimeout(() => { const w = nocEl.querySelector("#noc-welcome"); if (w) { w.style.transition = "opacity .8s"; w.style.opacity = "0"; } }, 5200);
   }
   function closeNoctalia(mode) {
     if (!nocEl) return;
@@ -3981,7 +4107,6 @@ if get_option('buildtype') == 'release'
     noctaliaOpen = false;
     closePanels();
     nocEl.querySelector("#noc-lock").classList.remove("show");
-    const w = nocEl.querySelector("#noc-welcome"); if (w) { w.style.opacity = ""; w.style.transition = ""; }
     if (mode !== "silent") {
       out('<span class="muted">Noctalia session ended.</span>');
       if (!inputLine) makeInputLine();
@@ -3997,6 +4122,286 @@ if get_option('buildtype') == 'release'
     } else if (e.key === "l" && e.ctrlKey) { e.preventDefault(); nocLock(); }
     else if ((e.key === "/" || (e.key === " " && e.metaKey)) && !NOC_PANELS.some((p) => nocEl.querySelector("#" + p).classList.contains("show"))) {
       e.preventDefault(); togglePanel("noc-launcher", () => { const s = nocEl.querySelector("#noc-search"); s.value = ""; renderApps(""); setTimeout(() => s.focus(), 30); });
+    }
+  }
+
+  // ======================================================================
+  //  GGR — custom command launcher / game mode (hidden: no help, no tab)
+  //  Catalog loads live from github.com/lauraevan/greatestgreatest-revive
+  //  via githack; a small bundled sample renders when offline (preview).
+  // ======================================================================
+  const GGR_BASE = "https://raw.githack.com/lauraevan/greatestgreatest-revive/main/";
+  const GGR_FALLBACK = {
+    withIcons: [
+      ["Eaglercraft 1.8.8", GGR_BASE + "library/Eag188.html", GGR_BASE + "icons/1.8.8.png"],
+      ["Steal Brainrot Duel", GGR_BASE + "library/brainrotFixed.html", GGR_BASE + "icons/brainrot.jpg"],
+      ["Basket Bros", GGR_BASE + "library/BasketBro.html", GGR_BASE + "icons/basketbro.png"],
+      ["Snow Rider 3D", GGR_BASE + "library/snowrider.html", GGR_BASE + "icons/snowrider.PNG"],
+      ["Retro Bowl", GGR_BASE + "library/retroB.html", GGR_BASE + "icons/retroB.png"],
+      ["Baldi's Basics +", GGR_BASE + "library/bbplus.html", GGR_BASE + "icons/bbplus.png"],
+      ["DELTARUNE", GGR_BASE + "library/deltar.html", GGR_BASE + "icons/deltar.png"],
+      ["Drive Mad", GGR_BASE + "library/maddrive.html", GGR_BASE + "icons/drivemad.jpg"],
+      ["Idle Miner Tycoon", GGR_BASE + "library/mineridletycoon.html", GGR_BASE + "icons/idleminer.png"],
+      ["EmulatorJS", GGR_BASE + "library/emujs.html", GGR_BASE + "icons/emujs.png"],
+      ["FNAF", GGR_BASE + "library/fnaf.html", GGR_BASE + "icons/fred1.jpg"],
+      ["Idle Breakout", GGR_BASE + "library/breakoutidle.html", GGR_BASE + "icons/idlebreak.png"],
+      ["BitLife", GGR_BASE + "library/bitterlife.html", GGR_BASE + "icons/bitterlife.jpg"],
+      ["Geometry Dash", GGR_BASE + "library/geometry.html", GGR_BASE + "icons/gd.png"],
+      ["Super Mariomon", GGR_BASE + "library/supermon.html", GGR_BASE + "icons/supermon.png"],
+      ["Clash of Vikings", GGR_BASE + "library/vikingclash.html", GGR_BASE + "icons/vikings.jpg"],
+    ],
+    ugs: [
+      ["Throw a Potato Again", "https://raw.githack.com/IAmNotTechnoblade/strongdogxp/master/html/throw%20a%20potato%20again/index.html"],
+      ["getaway shootout", "https://raw.githack.com/IAmNotTechnoblade/strongdogxp/master/html/getaway%20shootout/index.html"],
+      ["leader strike", "https://raw.githack.com/strongdogxp/strongdog2/master/html/leader-strike/index.html"],
+      ["badegg.io", "https://raw.githack.com/strongdogxp/strongdog2/master/html/badegg.io/index.html"],
+      ["cactus mccoy", "https://raw.githack.com/strongdogxp/strongdog2/master/swf/cactus%20mccoy/index.html"],
+      ["cactus mccoy 2", "https://raw.githack.com/strongdogxp/strongdog2/master/swf/cactus%20mccoy%202/index.html"],
+    ],
+  };
+  let ggrEl = null, ggrGames = null, ggrLoading = false;
+
+  function ggrStyle() {
+    if (document.getElementById("ggr-style")) return;
+    const s = document.createElement("style");
+    s.id = "ggr-style";
+    const ACC = "#8b5cf6", ACC2 = "#22d3ee", BG = "#0a0b10", CARD = "#14161f", BORD = "#242838", FG = "#e7e9f2", MUT = "#8b90a6";
+    const SANS = "'Inter','SF Pro Display',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif";
+    s.textContent = [
+      "#ggr{position:fixed;inset:0;z-index:100;background:" + BG + ";color:" + FG + ";font-family:" + SANS + ";display:none;flex-direction:column;opacity:0;transition:opacity .28s " + EZ.quad + ";-webkit-font-smoothing:antialiased;}",
+      "#ggr.open{display:flex;opacity:1;}",
+      "#ggr .top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:16px;padding:16px 22px;background:linear-gradient(180deg," + BG + "," + BG + "e0);border-bottom:1px solid " + BORD + ";backdrop-filter:blur(8px);}",
+      "#ggr .brand{display:flex;align-items:center;gap:11px;font-weight:800;font-size:20px;letter-spacing:-.01em;}",
+      "#ggr .brand .g{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg," + ACC + "," + ACC2 + ");display:grid;place-items:center;color:#0a0b10;font-weight:900;font-size:16px;box-shadow:0 4px 18px " + ACC + "55;}",
+      "#ggr .brand .sub{font-size:12px;font-weight:500;color:" + MUT + ";margin-left:2px;}",
+      "#ggr .gsearch{flex:1;max-width:440px;display:flex;align-items:center;gap:9px;background:" + CARD + ";border:1px solid " + BORD + ";border-radius:12px;padding:9px 13px;color:" + MUT + ";}",
+      "#ggr .gsearch svg{width:18px;height:18px;flex:0 0 auto;}",
+      "#ggr .gsearch input{flex:1;background:transparent;border:0;outline:0;color:" + FG + ";font:inherit;font-size:14px;}",
+      "#ggr .count{margin-left:auto;color:" + MUT + ";font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap;}",
+      "#ggr .xbtn{background:" + CARD + ";border:1px solid " + BORD + ";color:" + FG + ";width:36px;height:36px;border-radius:10px;cursor:pointer;display:grid;place-items:center;transition:background .15s,transform .12s;}",
+      "#ggr .xbtn:hover{background:" + ACC + ";color:#0a0b10;}",
+      "#ggr .xbtn:active{transform:scale(.9);}",
+      "#ggr .body{flex:1;overflow-y:auto;padding:22px;scrollbar-width:thin;scrollbar-color:" + BORD + " transparent;}",
+      "#ggr .sect{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:" + MUT + ";margin:6px 4px 14px;display:flex;align-items:center;gap:10px;}",
+      "#ggr .sect::after{content:'';flex:1;height:1px;background:" + BORD + ";}",
+      "#ggr .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:16px;margin-bottom:34px;}",
+      "#ggr .gcard{display:flex;flex-direction:column;gap:9px;cursor:pointer;text-decoration:none;color:inherit;border-radius:14px;padding:8px;transition:transform .16s " + EZ.back + ",background .16s;}",
+      "#ggr .gcard:hover{background:" + CARD + ";transform:translateY(-3px);}",
+      "#ggr .gcard .ic{position:relative;aspect-ratio:1;border-radius:13px;overflow:hidden;border:1px solid " + BORD + ";display:grid;place-items:center;font-weight:800;font-size:30px;color:#0a0b10;box-shadow:0 6px 20px #0006;}",
+      "#ggr .gcard .ic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}",
+      "#ggr .gcard .nm{font-size:12.5px;font-weight:500;line-height:1.3;text-align:center;color:" + FG + ";overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}",
+      "#ggr .ugs .gcard .ic{font-size:14px;font-weight:700;color:" + FG + ";background:" + CARD + " !important;padding:6px;text-align:center;line-height:1.2;}",
+      "#ggr .empty{color:" + MUT + ";text-align:center;padding:60px 20px;font-size:14px;}",
+      "#ggr .loading{position:absolute;inset:0;display:grid;place-items:center;color:" + MUT + ";font-size:14px;}",
+      "#ggr .spin{width:34px;height:34px;border:3px solid " + BORD + ";border-top-color:" + ACC + ";border-radius:50%;animation:ggrspin .8s linear infinite;margin:0 auto 14px;}",
+      "@keyframes ggrspin{to{transform:rotate(360deg);}}",
+      // player
+      "#ggr .player{position:absolute;inset:0;z-index:10;background:#000;display:none;flex-direction:column;}",
+      "#ggr .player.show{display:flex;}",
+      "#ggr .pbar{display:flex;align-items:center;gap:14px;padding:10px 16px;background:" + BG + ";border-bottom:1px solid " + BORD + ";}",
+      "#ggr .pbar .back{display:flex;align-items:center;gap:7px;background:" + CARD + ";border:1px solid " + BORD + ";color:" + FG + ";padding:8px 14px;border-radius:10px;cursor:pointer;font:inherit;font-size:13px;font-weight:600;}",
+      "#ggr .pbar .back:hover{background:" + ACC + ";color:#0a0b10;}",
+      "#ggr .pbar .ptitle{font-weight:600;font-size:14px;}",
+      "#ggr .pbar .full{margin-left:auto;background:" + CARD + ";border:1px solid " + BORD + ";color:" + FG + ";padding:8px 12px;border-radius:10px;cursor:pointer;font:inherit;font-size:13px;}",
+      "#ggr .player iframe{flex:1;width:100%;border:0;background:#000;}",
+      "#ggr .pnote{position:absolute;left:50%;top:60%;transform:translateX(-50%);color:" + MUT + ";font-size:13px;text-align:center;max-width:520px;line-height:1.6;}",
+      "@media(prefers-reduced-motion:reduce){#ggr *,#ggr{transition-duration:.01ms!important;animation:none!important;}}",
+    ].join("\n");
+    document.head.appendChild(s);
+  }
+
+  function ggrHue(name) { let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360; return "hsl(" + h + ",62%,58%)"; }
+
+  function ggrLoadGames() {
+    if (ggrGames) return Promise.resolve(ggrGames);
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return; done = true;
+        const abs = (p) => (!p ? "" : (/^https?:/.test(p) ? p : GGR_BASE + p));
+        let withIcons = [], ugs = [];
+        try { if (Array.isArray(window.GAME_DATA)) withIcons = window.GAME_DATA.filter((e) => e && e[3]).map((e) => [e[3], abs(e[1]), abs(e[2])]); } catch (e) {}
+        try { if (Array.isArray(window.NOICON_GAMES)) ugs = window.NOICON_GAMES.filter((e) => e && e[3]).map((e) => [e[3], abs(e[1])]); } catch (e) {}
+        if (!withIcons.length) { withIcons = GGR_FALLBACK.withIcons; ugs = GGR_FALLBACK.ugs; ggrGames = { withIcons: withIcons, ugs: ugs, live: false }; }
+        else ggrGames = { withIcons: withIcons, ugs: ugs, live: true };
+        resolve(ggrGames);
+      };
+      let pending = 2;
+      const oneDone = () => { if (--pending <= 0) finish(); };
+      ["games-data.js", "games-noicon.js"].forEach((f) => {
+        const sc = document.createElement("script");
+        sc.src = GGR_BASE + f; sc.async = true;
+        sc.onload = oneDone; sc.onerror = oneDone;
+        document.head.appendChild(sc);
+      });
+      setTimeout(finish, 6000); // offline / CSP fallback
+    });
+  }
+
+  function ggrCard(name, url, icon, ugs) {
+    const hue = ggrHue(name);
+    const inner = ugs
+      ? esc(name)
+      : (icon ? '<img loading="lazy" src="' + esc(icon) + '" alt="">' : "") + esc(name[0] || "?").toUpperCase();
+    return '<a class="gcard" href="' + esc(url) + '" data-url="' + esc(url) + '" data-name="' + esc(name) + '">' +
+      '<span class="ic" style="background:' + hue + '">' + inner + "</span>" +
+      '<span class="nm">' + esc(name) + "</span></a>";
+  }
+
+  function ggrRender(filter) {
+    const body = ggrEl.querySelector("#ggr-body");
+    const q = (filter || "").trim().toLowerCase();
+    const wi = ggrGames.withIcons.filter((g) => !q || g[0].toLowerCase().includes(q));
+    const ug = ggrGames.ugs.filter((g) => !q || g[0].toLowerCase().includes(q));
+    let html = "";
+    if (wi.length) html += '<div class="grid">' + wi.map((g) => ggrCard(g[0], g[1], g[2], false)).join("") + "</div>";
+    if (ug.length) html += '<div class="sect">UGS Games</div><div class="grid ugs">' + ug.map((g) => ggrCard(g[0], g[1], "", true)).join("") + "</div>";
+    if (!wi.length && !ug.length) html = '<div class="empty">No games match “' + esc(filter) + "”.</div>";
+    body.innerHTML = html;
+    ggrEl.querySelector("#ggr-count").textContent = (wi.length + ug.length).toLocaleString() + " games" + (ggrGames.live ? "" : " · preview sample");
+    body.querySelectorAll(".gcard").forEach((c) => c.addEventListener("click", (e) => { e.preventDefault(); ggrPlay(c.getAttribute("data-url"), c.getAttribute("data-name")); }));
+    // if an icon fails to load (offline preview), drop it so the letter tile shows cleanly
+    body.querySelectorAll(".gcard .ic img").forEach((img) => img.addEventListener("error", () => img.remove()));
+  }
+
+  function ggrPlay(url, name) {
+    const player = ggrEl.querySelector("#ggr-player");
+    ggrEl.querySelector("#ggr-ptitle").textContent = name;
+    const frame = ggrEl.querySelector("#ggr-frame");
+    frame.src = url;
+    player.classList.add("show");
+    ggrEl.querySelector("#ggr-full").onclick = () => { try { frame.requestFullscreen(); } catch (e) {} };
+  }
+  function ggrClosePlayer() {
+    const player = ggrEl.querySelector("#ggr-player");
+    player.classList.remove("show");
+    ggrEl.querySelector("#ggr-frame").src = "about:blank";
+  }
+
+  function buildGGR() {
+    if (ggrEl) return;
+    ggrStyle();
+    const el = document.createElement("div");
+    el.id = "ggr";
+    el.innerHTML =
+      '<div class="top">' +
+        '<div class="brand"><span class="g">GG</span>GGR <span class="sub">greatest greatest · revive</span></div>' +
+        '<div class="gsearch">' + ic("search") + '<input id="ggr-search" placeholder="Search games…" autocomplete="off" spellcheck="false"></div>' +
+        '<span class="count" id="ggr-count"></span>' +
+        '<button class="xbtn" id="ggr-x" title="Close (Esc)">' + ic("x") + "</button>" +
+      "</div>" +
+      '<div class="body" id="ggr-body"></div>' +
+      '<div class="loading" id="ggr-loading"><div><div class="spin"></div>Loading catalog…</div></div>' +
+      '<div class="player" id="ggr-player">' +
+        '<div class="pbar"><button class="back" id="ggr-back">' + ic("logout") + ' Library</button><span class="ptitle" id="ggr-ptitle"></span><button class="full" id="ggr-full">Fullscreen</button></div>' +
+        '<iframe id="ggr-frame" allow="autoplay; fullscreen; gamepad; pointer-lock" allowfullscreen></iframe>' +
+        '<div class="pnote">If the game stays black, this preview build can\'t reach external game hosts — it loads live on the deployed site.</div>' +
+      "</div>";
+    document.body.appendChild(el);
+    ggrEl = el;
+    el.querySelector("#ggr-x").addEventListener("click", ggrCloseCatalog);
+    el.querySelector("#ggr-back").addEventListener("click", ggrClosePlayer);
+    const search = el.querySelector("#ggr-search");
+    search.addEventListener("input", () => { if (ggrGames) ggrRender(search.value); });
+  }
+
+  async function ggrOpenCatalog() {
+    buildGGR();
+    void ggrEl.offsetWidth;
+    ggrEl.classList.add("open");
+    ggrOpen = true;
+    ggrEl.querySelector("#ggr-loading").style.display = ggrGames ? "none" : "grid";
+    await ggrLoadGames();
+    ggrEl.querySelector("#ggr-loading").style.display = "none";
+    ggrRender("");
+    setTimeout(() => { const s = ggrEl.querySelector("#ggr-search"); if (s) s.focus(); }, 40);
+  }
+  let ggrOpen = false;
+  function ggrCloseCatalog() {
+    if (!ggrEl) return;
+    ggrClosePlayer();
+    ggrEl.classList.remove("open");
+    ggrOpen = false;
+  }
+
+  // ---- the hidden commands -------------------------------------------------
+  async function ggrCompileAnim(kind) {
+    inputEnabled = false;
+    try {
+      out('<span class="green b">:: </span>Retrieving custom launcher sources...');
+      out("Cloning into 'ggr-cl'...");
+      out("remote: Enumerating objects: 512, done.");
+      await progress("Receiving objects", "3.7 MiB", 700);
+      out("Resolving deltas: 100% (318/318), done.");
+      out('<span class="green b">==> </span>Building custom command launcher (ggr-cl)...');
+      out("cc -O2 -pipe -march=native -c ggr_cl.c -o ggr_cl.o");
+      await ggrNinja();
+      out("cc ggr_cl.o loader.o catalog.o -o ggr-cl");
+      out('<span class="green b">==> </span>Installing to /usr/local/bin/ggr-cl');
+      await sleep(reduceMotion ? 0 : 260);
+    } finally { inputEnabled = true; }
+  }
+  async function ggrNinja() {
+    const line = out("");
+    const steps = reduceMotion ? 1 : 18, total = 47;
+    for (let k = 0; k <= steps; k++) {
+      const n = Math.round((k / steps) * total);
+      line.innerHTML = '<span class="green">[' + n + "/" + total + "]</span> Compiling object ggr/" + ["loader", "catalog", "sandbox", "ipc", "proto"][k % 5] + "_" + n + ".c.o";
+      scrollDown();
+      if (!reduceMotion) await sleep(52);
+    }
+  }
+
+  function ggrCmdInstall() {
+    out('<span class="warn">installing custom command launchers can result in issues in the terminal</span> <span class="muted">(Y/N)</span>');
+    pendingConfirm = async (yes) => {
+      if (!yes) { out("aborted."); return; }
+      await ggrCompileAnim("install");
+      ggrInstalled = true; persist();
+      out("");
+      out('<span class="ok">✔</span> You have now installed GGR type <span class="b">boot GGR cl</span>');
+    };
+  }
+  function ggrCmdBoot() {
+    if (!ggrInstalled) { out('<span class="fail">bash: boot: command not found</span>'); LAST_STATUS = 127; return; }
+    out('<span class="warn">launching Custom launchers can result in issues with the terminal</span> <span class="muted">(Y/N)</span>');
+    pendingConfirm = async (yes) => {
+      if (!yes) { out("aborted."); return; }
+      out('<span class="arch-b">GGR:</span> Booting');
+      inputEnabled = false;
+      try {
+        for (let i = 0; i < 3; i++) { await sleep(reduceMotion ? 0 : 240); out('<span class="muted">' + "▪".repeat(i + 1) + "</span>"); }
+        await sleep(reduceMotion ? 0 : 200);
+      } finally { inputEnabled = true; }
+      gameMode = true; persist();
+      out('<span class="ok">✔</span> GGR ready.');
+    };
+  }
+  function ggrCmdStart() {
+    if (!gameMode) { out('<span class="fail">Start: command not found</span>'); LAST_STATUS = 127; return; }
+    out('<span class="arch-b">GGR:</span> launching catalog…');
+    ggrOpenCatalog();
+  }
+  function ggrCmdStop() {
+    if (!gameMode) { out('<span class="fail">Stop: command not found</span>'); LAST_STATUS = 127; return; }
+    ggrCloseCatalog();
+    gameMode = false; persist();
+    out('<span class="muted">Game mode disabled.</span>');
+  }
+  // returns true if the line was a hidden GGR command (so it never hits dispatch/help/tab)
+  async function ggrIntercept(line) {
+    const t = line.trim();
+    if (/^install\s+custom\s+cl\s+-GGR$/i.test(t)) { ggrCmdInstall(); return true; }
+    if (/^boot\s+GGR\s+cl$/i.test(t)) { ggrCmdBoot(); return true; }
+    if (/^start\s+GGR$/i.test(t)) { ggrCmdStart(); return true; }
+    if (/^stop\s+GGR$/i.test(t)) { ggrCmdStop(); return true; }
+    return false;
+  }
+  function ggrKey(e) {
+    if (e.key === "Escape") {
+      const player = ggrEl.querySelector("#ggr-player");
+      if (player.classList.contains("show")) { ggrClosePlayer(); e.preventDefault(); }
+      else { ggrCloseCatalog(); e.preventDefault(); }
     }
   }
 
@@ -4018,7 +4423,7 @@ if get_option('buildtype') == 'release'
     sh(a) { return commands.bash(a); },
     gcc: (a) => runGcc(a, false), cc: (a) => runGcc(a, false), clang: (a) => runGcc(a, false),
     "g++": (a) => runGcc(a, true), "c++": (a) => runGcc(a, true),
-    make: () => runMake(),
+    make: (a) => runMake(a),
     meson: () => outText("meson: run inside a project. Noctalia builds via `pacman -S noctalia-shell`."),
     ninja: () => outText("ninja: no build directory. Configure a meson project first."),
     just: () => outText("just: command runner — see the project justfile."),
@@ -4042,6 +4447,128 @@ if get_option('buildtype') == 'release'
     set() { for (const k of Object.keys(ENV)) outText(k + "=" + ENV[k]); },
     printenv(a) { if (a[0]) outText(ENV[a[0]] || ""); else for (const k of Object.keys(ENV)) outText(k + "=" + ENV[k]); },
     "reset-fs"() { try { localStorage.removeItem(FS_KEY); } catch (e) {} out('<span class="warn">Filesystem reset. Reloading…</span>'); setTimeout(() => location.reload(), 500); },
+  });
+
+  // ---- coreutils / shell builtins (authenticity pass) ----------------------
+  Object.assign(commands, {
+    printf(a) {
+      let fmt = a[0] != null ? a[0] : "";
+      fmt = fmt.replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\r/g, "\r").replace(/\\\\/g, "\\").replace(/\\"/g, '"');
+      let i = 1;
+      const s = fmt.replace(/%[-+ 0-9.]*[sdifxXcou%]/g, (spec) => {
+        if (spec === "%%") return "%";
+        const conv = spec[spec.length - 1]; const v = a[i++];
+        if (conv === "d" || conv === "i") return String(Math.trunc(Number(v) || 0));
+        if (conv === "u") return String((Math.trunc(Number(v) || 0)) >>> 0);
+        if (conv === "x") return ((Math.trunc(Number(v) || 0)) >>> 0).toString(16);
+        if (conv === "X") return ((Math.trunc(Number(v) || 0)) >>> 0).toString(16).toUpperCase();
+        if (conv === "o") return ((Math.trunc(Number(v) || 0)) >>> 0).toString(8);
+        if (conv === "f") { const m = spec.match(/\.(\d+)/); return (Number(v) || 0).toFixed(m ? +m[1] : 6); }
+        if (conv === "c") return String(v == null ? "" : v).slice(0, 1);
+        if (conv === "s") return v == null ? "" : String(v);
+        return spec;
+      });
+      s.split("\n").forEach((l, idx, arr) => { if (idx === arr.length - 1 && l === "") return; outText(l); });
+    },
+    cd(a) {
+      let t = a[0] || "~", show = false;
+      if (t === "-") { t = ENV.OLDPWD || ("/" + cwd.join("/")); show = true; }
+      const r = resolve(t);
+      if (!r.node) { outText("cd: " + (a[0] || "") + ": No such file or directory"); LAST_STATUS = 1; return; }
+      if (r.node.type !== "dir") { outText("cd: " + (a[0] || "") + ": Not a directory"); LAST_STATUS = 1; return; }
+      ENV.OLDPWD = "/" + cwd.join("/");
+      cwd = r.parts;
+      ENV.PWD = "/" + cwd.join("/");
+      if (show) outText(ENV.PWD);
+    },
+    chmod(a) {
+      const nf = a.filter((x) => !x.startsWith("-") || /^-?[rwx+-]+$/.test(x) === false);
+      const mode = a.filter((x) => !x.startsWith("-"))[0] || a.find((x) => /[+-][rwx]/.test(x)) || "";
+      const files = a.filter((x) => !x.startsWith("-") && x !== mode);
+      const setX = /\+x/.test(mode) || /^[0-7]?[0-7]?[1357]$/.test(mode);
+      const clrX = /-x/.test(mode) && !/\+/.test(mode);
+      for (const f of files) {
+        const r = resolve(f);
+        if (!r.node) { outText("chmod: cannot access '" + f + "': No such file or directory"); LAST_STATUS = 1; continue; }
+        if (setX) r.node.exe = true; else if (clrX) r.node.exe = false;
+      }
+      persist();
+    },
+    async sleep(a) { let sec = parseFloat(a[0]) || 0; sec = Math.min(sec, 6); if (sec > 0 && !reduceMotion) await sleep(sec * 1000); },
+    seq(a) {
+      const n = a.filter((x) => !x.startsWith("-")).map(Number);
+      let first = 1, incr = 1, last;
+      if (n.length === 1) last = n[0]; else if (n.length === 2) { first = n[0]; last = n[1]; } else { first = n[0]; incr = n[1]; last = n[2]; }
+      if (last == null || isNaN(last)) { outText("seq: missing operand"); LAST_STATUS = 1; return; }
+      if (incr > 0) for (let i = first; i <= last + 1e-9; i += incr) outText(String(+i.toFixed(6)));
+      else if (incr < 0) for (let i = first; i >= last - 1e-9; i += incr) outText(String(+i.toFixed(6)));
+    },
+    basename(a) { let p = (a[0] || "").replace(/\/+$/, ""); let b = p.split("/").pop() || "/"; if (a[1] && b.endsWith(a[1]) && b !== a[1]) b = b.slice(0, -a[1].length); outText(b); },
+    dirname(a) { let p = (a[0] || "").replace(/\/+$/, ""); const i = p.lastIndexOf("/"); outText(i < 0 ? "." : (i === 0 ? "/" : p.slice(0, i))); },
+    cut(a) {
+      let delim = "\t", fields = "1";
+      for (let i = 0; i < a.length; i++) {
+        const x = a[i];
+        if (x === "-d") delim = a[++i] || "\t";
+        else if (x.startsWith("-d")) delim = x.slice(2);
+        else if (x === "-f") fields = a[++i] || "1";
+        else if (x.startsWith("-f")) fields = x.slice(2);
+      }
+      if (delim === "\\t") delim = "\t";
+      const fset = fields.split(",").map(Number);
+      fileOrStdin(a).replace(/\n$/, "").split("\n").forEach((line) => {
+        const parts = line.split(delim);
+        outText(fset.map((f) => (parts[f - 1] != null ? parts[f - 1] : "")).join(delim));
+      });
+    },
+    du(a) {
+      const node = nodeAt(cwd);
+      const size = (nd) => nd.type === "file" ? (nd.content || "").length : Object.keys(nd.children).reduce((s, k) => s + size(nd.children[k]), 0);
+      const h = a.some((x) => x.includes("h"));
+      const b = size(node);
+      const fmt = h ? (b > 1048576 ? (b / 1048576).toFixed(1) + "M" : b > 1024 ? Math.ceil(b / 1024) + "K" : b + "") : String(Math.max(1, Math.ceil(b / 1024)));
+      outText(fmt + "\t.");
+    },
+    ps(a) {
+      const aux = a.join("").includes("a");
+      if (aux) outLines([
+        "USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND",
+        "root           1  0.0  0.1 168920 12184 ?        Ss   08:41   0:01 /sbin/init",
+        "root         318  0.0  0.2 402100 25600 ?        Ssl  08:41   0:02 /usr/lib/systemd/systemd-journald",
+        "root         690  0.0  0.1 234100 15600 ?        Ss   08:41   0:00 /usr/lib/systemd/systemd-logind",
+        USER + "        1288  0.0  0.2 225140 18004 tty1     S    08:41   0:00 -bash",
+        USER + "        1902  0.0  0.1 210344 11200 tty1     R+   08:42   0:00 ps aux",
+      ]);
+      else outLines([
+        "    PID TTY          TIME CMD",
+        "   1288 tty1     00:00:00 bash",
+        "   1902 tty1     00:00:00 ps",
+      ]);
+    },
+    alias(a, raw) {
+      const m = (raw || "").match(/^alias\s+([A-Za-z_][\w-]*)=(.*)$/s);
+      if (m) { ALIASES[m[1]] = m[2].replace(/^["']|["']$/g, ""); persist(); return; }
+      const names = a.filter((x) => !x.startsWith("-"));
+      const keys = names.length ? names : Object.keys(ALIASES).sort();
+      for (const k of keys) { if (ALIASES[k] != null) outText("alias " + k + "='" + ALIASES[k] + "'"); else if (names.length) outText("bash: alias: " + k + ": not found"); }
+    },
+    unalias(a) { for (const n of a.filter((x) => !x.startsWith("-"))) delete ALIASES[n]; persist(); },
+    type(a) {
+      const builtins = ["cd", "echo", "export", "alias", "unalias", "pwd", "help", "exit", "printf", "test", "source", ".", ":", "true", "false", "history", "type"];
+      for (const n of a) {
+        if (ALIASES[n]) outText(n + " is aliased to `" + ALIASES[n] + "'");
+        else if (builtins.includes(n)) outText(n + " is a shell builtin");
+        else if (commands[n] || n === "pacman" || n === "git") outText(n + " is /usr/bin/" + n);
+        else { outText("bash: type: " + n + ": not found"); LAST_STATUS = 1; }
+      }
+    },
+    "true"() { LAST_STATUS = 0; },
+    "false"() { LAST_STATUS = 1; },
+    ":"() { LAST_STATUS = 0; },
+    groups() { outText("wheel network power sys " + USER); },
+    logname() { outText(USER); },
+    tty() { outText("/dev/tty1"); },
+    yes(a) { const w = a.join(" ") || "y"; for (let i = 0; i < 20; i++) outText(w); outText("… (^C)"); },
   });
 
   // ======================================================================
@@ -4221,8 +4748,16 @@ if get_option('buildtype') == 'release'
 
   async function runLine(line, silent) {
     const trimmed = line.trim();
+    // a pending Y/N confirmation consumes this line instead of running it
+    if (pendingConfirm) {
+      const cb = pendingConfirm; pendingConfirm = null;
+      await cb(/^y(es)?$/i.test(trimmed));
+      return;
+    }
     if (!trimmed) return;
     if (!silent) { HISTORY.push(trimmed); histIdx = HISTORY.length; }
+    // hidden custom command-launcher / game-mode commands (never reach dispatch)
+    if (await ggrIntercept(trimmed)) return;
     ENV.PWD = "/" + cwd.join("/");
     // full command line: variable/command expansion, ; && || pipes redirects, ./exec
     await execLine(trimmed);
@@ -4289,6 +4824,7 @@ if get_option('buildtype') == 'release'
   // ---- keyboard ----
   function onKey(e) {
     if (booting) { skipBoot(); return; }
+    if (ggrOpen) { ggrKey(e); return; } // game catalog captures keys
     if (noctaliaOpen) { nocKey(e); return; } // Noctalia session captures keys
     if (editor.classList.contains("open")) return; // editor handles its own keys
     if (viewer.classList.contains("open")) {
@@ -4367,7 +4903,7 @@ if get_option('buildtype') == 'release'
     const v = kb.value;
     kb.value = "";
     if (booting) { skipBoot(); return; }
-    if (!inputEnabled || editor.classList.contains("open") || noctaliaOpen) return;
+    if (!inputEnabled || editor.classList.contains("open") || noctaliaOpen || ggrOpen) return;
     for (const ch of v) {
       buffer = buffer.slice(0, cursorPos) + ch + buffer.slice(cursorPos);
       cursorPos++;
@@ -4376,7 +4912,7 @@ if get_option('buildtype') == 'release'
   });
   screen.addEventListener("click", () => {
     if (booting) { skipBoot(); return; }
-    if (!editor.classList.contains("open") && !viewer.classList.contains("open")) focusInput();
+    if (!editor.classList.contains("open") && !viewer.classList.contains("open") && !ggrOpen) focusInput();
   });
   window.addEventListener("focus", () => { if (inputLine) renderInput(); });
   window.addEventListener("blur", () => { if (inputLine) renderInput(); });

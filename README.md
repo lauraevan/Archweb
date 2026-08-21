@@ -24,14 +24,23 @@ persist across reloads (localStorage).
 
 ## Compile and run real code
 
-- **C:** `gcc file.c -o out` compiles a real C subset (main, functions, `int/char/
-  float/double`, arrays, arithmetic, `if/for/while`, `printf/puts/putchar`) and
-  `./out` runs it.
+- **C — an authentic gcc pipeline.** `gcc file.c -o out` runs cpp → cc1 → as →
+  collect2/ld with real diagnostics: `file.c:line:col: error/warning:` with a source
+  gutter and caret, `-Wall` implicit-declaration warnings, `undefined reference to
+  'main'` link errors, `-c` to emit `.o` objects, linking objects, and `-v` verbose
+  stage output. Success is silent, like the real thing. `./out` runs the program
+  (main, functions, `int/char/float/double`, arrays, arithmetic, `if/for/while`,
+  `printf/puts/putchar`).
+- **make:** parses a real `Makefile` (variables, targets, recipes) or falls back to
+  the implicit rule.
 - **JavaScript:** `node file.js` / `node -e "…"` executes real JS in the page engine.
 - **Bash:** `bash script.sh` runs a working interpreter (variables, `$()`, `if`,
   `for`, `while`, pipes, redirects) — inline or multi-line.
 - **git:** `git init/clone/add/commit/status/log/branch/checkout/config` operate on a
   genuine in-tree commit model.
+- **coreutils:** `printf seq cut chmod du ps basename dirname alias type cd -` and the
+  usual `ls/grep/wc/sort/head/tail/…`, with `|` pipes, `>`/`>>` redirects, and
+  `&&`/`||`/`;` chaining.
 
 ```
 echo 'int main(){ for(int i=0;i<3;i++) printf("hi %d\n", i); }' > hi.c
