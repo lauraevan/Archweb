@@ -80,6 +80,5 @@
 #ggr .pbar .full { margin-left: auto; }
 #ggr .pbar .ptitle { font-weight: 600; font-size: 14px; }
 #ggr .player iframe { flex: 1; width: 100%; border: 0; background: #000; }
-#ggr .pnote { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); color: var(--mut); font-size: 13px; text-align: center; max-width: 520px; line-height: 1.6; padding: 0 20px; }
 
 @media (prefers-reduced-motion: reduce) { #ggr * { animation: none !important; } }

@@ -1796,7 +1796,6 @@ if get_option('buildtype') == 'release'
 #ggr .pbar .full { margin-left: auto; }
 #ggr .pbar .ptitle { font-weight: 600; font-size: 14px; }
 #ggr .player iframe { flex: 1; width: 100%; border: 0; background: #000; }
-#ggr .pnote { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); color: var(--mut); font-size: 13px; text-align: center; max-width: 520px; line-height: 1.6; padding: 0 20px; }
 
 @media (prefers-reduced-motion: reduce) { #ggr * { animation: none !important; } }
 
@@ -2716,8 +2715,10 @@ if get_option('buildtype') == 'release'
   const ALIASES = { ll: "ls -lah", la: "ls -a", "..": "cd ..", grep: "grep --color=auto", ls: "ls --color=auto" };
   const INSTALLED = {}; // extra packages installed at runtime (name -> version)
   let noctaliaInstalled = false;
-  let ggrInstalled = false;   // custom command-launcher installed
-  let gameMode = false;       // game mode toggled on
+  // hidden custom command-launchers: each id can be installed (compiled) and
+  // then booted (game/app mode on). Kept as maps so several can coexist.
+  let clInstalled = { GGR: false, t9os: false, gnmath: false, html: false };
+  let clBooted    = { GGR: false, t9os: false, gnmath: false, html: false };
   let pendingConfirm = null;  // callback awaiting a Y/N answer on the next line
   let LAST_STATUS = 0;
   let CURRENT_STDIN = null;
@@ -2733,7 +2734,7 @@ if get_option('buildtype') == 'release'
           localStorage.setItem(FS_KEY, JSON.stringify({
             v: NOC_VERSION + "|3", root: root, cwd: cwd, env: ENV, aliases: ALIASES,
             installed: INSTALLED, noctalia: noctaliaInstalled,
-            ggr: ggrInstalled, game: gameMode,
+            cl: clInstalled, clb: clBooted,
             history: HISTORY.slice(-800), git: GITREPOS, gitcfg: GITCONFIG,
           }));
         } catch (e) { /* private mode / quota — ignore */ }
@@ -2752,8 +2753,10 @@ if get_option('buildtype') == 'release'
       Object.assign(ALIASES, s.aliases || {});
       Object.assign(INSTALLED, s.installed || {});
       noctaliaInstalled = !!s.noctalia;
-      ggrInstalled = !!s.ggr;
-      gameMode = !!s.game;
+      if (s.cl && typeof s.cl === "object") Object.assign(clInstalled, s.cl);
+      if (s.clb && typeof s.clb === "object") Object.assign(clBooted, s.clb);
+      if (s.ggr) clInstalled.GGR = true;   // migrate legacy single-CL state
+      if (s.game) clBooted.GGR = true;
       if (Array.isArray(s.history)) { HISTORY.length = 0; s.history.forEach((h) => HISTORY.push(h)); histIdx = HISTORY.length; }
       if (s.git) Object.assign(GITREPOS, s.git);
       if (s.gitcfg) Object.assign(GITCONFIG, s.gitcfg);
@@ -4252,6 +4255,7 @@ if get_option('buildtype') == 'release'
     ],
   };
   let ggrEl = null, ggrGames = null, ggrLoading = false;
+  let activeCL = null;   // id of the custom-launcher overlay currently on screen
 
   // Prefer the linked games.css; if it didn't load (single-file preview), inject
   // the embedded copy so the catalog is styled everywhere.
@@ -4354,7 +4358,6 @@ if get_option('buildtype') == 'release'
       '<div class="player" id="ggr-player">' +
         '<div class="pbar"><button class="back" id="ggr-back">' + ic("logout") + ' Library</button><span class="ptitle" id="ggr-ptitle"></span><button class="full" id="ggr-full">Fullscreen</button></div>' +
         '<iframe id="ggr-frame" allow="autoplay; fullscreen; gamepad; pointer-lock" allowfullscreen></iframe>' +
-        '<div class="pnote">If the game stays black, this environment can\'t reach the external game host — games load on the deployed site.</div>' +
       "</div>";
     document.body.appendChild(el);
     ggrEl = el;
@@ -4369,7 +4372,7 @@ if get_option('buildtype') == 'release'
     buildGGR();
     void ggrEl.offsetWidth;
     ggrEl.classList.add("open");
-    ggrOpen = true;
+    ggrOpen = true; activeCL = "GGR";
     ggrEl.querySelector("#ggr-loading").style.display = ggrGames ? "none" : "grid";
     await ggrLoadGames();
     ggrEl.querySelector("#ggr-loading").style.display = "none";
@@ -4381,88 +4384,255 @@ if get_option('buildtype') == 'release'
     if (!ggrEl) return;
     ggrClosePlayer();
     ggrEl.classList.remove("open");
-    ggrOpen = false;
+    ggrOpen = false; if (activeCL === "GGR") activeCL = null;
   }
 
-  // ---- the hidden commands -------------------------------------------------
-  async function ggrCompileAnim(kind) {
+  // ===== hidden custom command-launchers (registry) =========================
+  // Every launcher follows the same flow: install custom cl -<id>  ->  boot <id>
+  // cl  ->  Start <id> / Stop <id>. None of them appear in help or tab-complete.
+  const CL_SITE = {
+    t9os:   { title: "T9 OS", url: "https://t9os.space/larps.html" },   // T9 OS V4
+    gnmath: { title: "gn-math", url: "https://gn-math.dev/" },
+  };
+  const CLS = {
+    GGR:    { id: "GGR", label: "GGR", clone: "ggr-cl", bin: "ggr-cl", src: "ggr_cl.c",
+              objs: 512, size: "3.7 MiB", deltas: 318, total: 47,
+              modules: ["loader", "catalog", "sandbox", "ipc", "proto"],
+              launchMsg: "launching catalog…", open: ggrOpenCatalog, close: ggrCloseCatalog },
+    t9os:   { id: "t9os", label: "t9os", clone: "t9os-cl", bin: "t9os-cl", src: "t9os_cl.c",
+              objs: 684, size: "5.1 MiB", deltas: 441, total: 63,
+              modules: ["loader", "sandbox", "frame", "ipc", "proxy", "net"],
+              launchMsg: "launching T9 OS…", open: () => clOpenSite("t9os"), close: clCloseSite },
+    gnmath: { id: "gnmath", label: "gn-math", clone: "gnmath-cl", bin: "gnmath-cl", src: "gnmath_cl.c",
+              objs: 596, size: "4.4 MiB", deltas: 377, total: 55,
+              modules: ["loader", "sandbox", "frame", "ipc", "render", "net"],
+              launchMsg: "launching gn-math…", open: () => clOpenSite("gnmath"), close: clCloseSite },
+    html:   { id: "html", label: "html file loader", clone: "html-cl", bin: "html-cl", src: "html_cl.c",
+              objs: 243, size: "1.2 MiB", deltas: 151, total: 29,
+              modules: ["loader", "render", "sandbox", "blob", "fs"],
+              launchMsg: "opening html file loader…", open: clOpenHtml, close: clCloseHtml },
+  };
+  function clResolve(tok) {
+    const k = (tok || "").toLowerCase();
+    for (const id in CLS) if (id.toLowerCase() === k) return id;
+    return null;
+  }
+
+  // ---- overlay styling (self-contained; independent of games.css) ----------
+  function clStyle() {
+    if (document.getElementById("cl-style")) return;
+    const s = document.createElement("style"); s.id = "cl-style";
+    s.textContent =
+      '#clsite{position:fixed;inset:0;z-index:100;background:#000;display:none;flex-direction:column}' +
+      '#clsite.open{display:flex}' +
+      '#clsite .clbar{display:flex;align-items:center;gap:14px;padding:9px 14px;background:#0d0f14;border-bottom:1px solid #242835;color:#e8eaf0;font-family:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}' +
+      '#clsite .clbar button{display:flex;align-items:center;gap:7px;background:#161922;border:1px solid #242835;color:#e8eaf0;padding:7px 13px;border-radius:8px;cursor:pointer;font:inherit;font-size:13px}' +
+      '#clsite .clbar button:hover{background:#242835}' +
+      '#clsite .clbar .clx svg{width:16px;height:16px}' +
+      '#clsite .clbar .clt{font-weight:600;font-size:14px}' +
+      '#clsite .clbar .clfull{margin-left:auto}' +
+      '#clsite iframe{flex:1;width:100%;border:0;background:#000}' +
+      '#clhtml{position:fixed;inset:0;z-index:100;background:#fff;display:none}' +
+      '#clhtml.open{display:block}' +
+      '#clhtml .clh-pick{position:absolute;left:20px;top:18px;color:#000;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}' +
+      '#clhtml .clh-lbl{font-size:15px;margin-bottom:10px}' +
+      '#clhtml .clh-btn{font:inherit;font-size:13px;padding:7px 14px;background:#fff;color:#000;border:1px solid #000;border-radius:4px;cursor:pointer}' +
+      '#clhtml .clh-btn:hover{background:#000;color:#fff}' +
+      '#clhtml iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#fff;display:none}' +
+      '#clhtml.loaded iframe{display:block}';
+    document.head.appendChild(s);
+  }
+
+  // ---- generic full-screen site launcher (t9os, gn-math) -------------------
+  let clSiteEl = null;
+  function buildSite() {
+    if (clSiteEl) return;
+    clStyle();
+    const el = document.createElement("div");
+    el.id = "clsite";
+    el.innerHTML =
+      '<div class="clbar">' +
+        '<button class="clx" id="clsite-x">' + ic("logout") + " Exit</button>" +
+        '<span class="clt" id="clsite-title"></span>' +
+        '<button class="clfull" id="clsite-full">Fullscreen</button>' +
+      "</div>" +
+      '<iframe id="clsite-frame" allow="autoplay; fullscreen; gamepad; clipboard-read; clipboard-write" allowfullscreen></iframe>';
+    document.body.appendChild(el);
+    clSiteEl = el;
+    el.querySelector("#clsite-x").addEventListener("click", clCloseSite);
+    el.querySelector("#clsite-full").addEventListener("click", () => { try { el.querySelector("#clsite-frame").requestFullscreen(); } catch (e) {} });
+  }
+  function clOpenSite(id) {
+    buildSite();
+    const info = CL_SITE[id];
+    clSiteEl.querySelector("#clsite-title").textContent = info.title;
+    clSiteEl.querySelector("#clsite-frame").src = info.url;
+    void clSiteEl.offsetWidth;
+    clSiteEl.classList.add("open");
+    activeCL = id;
+  }
+  function clCloseSite() {
+    if (!clSiteEl) return;
+    clSiteEl.classList.remove("open");
+    clSiteEl.querySelector("#clsite-frame").src = "about:blank";
+    if (activeCL === "t9os" || activeCL === "gnmath") activeCL = null;
+  }
+
+  // ---- the -html custom launcher: plain white screen + file loader ---------
+  let clHtmlEl = null, clHtmlUrl = null;
+  function buildHtmlLoader() {
+    if (clHtmlEl) return;
+    clStyle();
+    const el = document.createElement("div");
+    el.id = "clhtml";
+    el.innerHTML =
+      '<div class="clh-pick">' +
+        '<div class="clh-lbl">load html files</div>' +
+        '<button class="clh-btn" id="clhtml-btn">Get file</button>' +
+        '<input type="file" id="clhtml-file" accept=".html,.htm,text/html" hidden>' +
+      "</div>" +
+      '<iframe id="clhtml-frame" allow="autoplay; fullscreen"></iframe>';
+    document.body.appendChild(el);
+    clHtmlEl = el;
+    const input = el.querySelector("#clhtml-file");
+    el.querySelector("#clhtml-btn").addEventListener("click", () => input.click());
+    input.addEventListener("change", () => {
+      const f = input.files && input.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try { if (clHtmlUrl) URL.revokeObjectURL(clHtmlUrl); } catch (e) {}
+        const blob = new Blob([reader.result], { type: "text/html" });
+        clHtmlUrl = URL.createObjectURL(blob);
+        el.querySelector("#clhtml-frame").src = clHtmlUrl;
+        el.classList.add("loaded");
+      };
+      reader.readAsText(f);
+      input.value = ""; // let the same file be picked again later
+    });
+  }
+  function clOpenHtml() {
+    buildHtmlLoader();
+    clHtmlEl.classList.remove("loaded");
+    clHtmlEl.querySelector("#clhtml-frame").src = "about:blank";
+    void clHtmlEl.offsetWidth;
+    clHtmlEl.classList.add("open");
+    activeCL = "html";
+  }
+  function clCloseHtml() {
+    if (!clHtmlEl) return;
+    clHtmlEl.classList.remove("open");
+    clHtmlEl.classList.remove("loaded");
+    clHtmlEl.querySelector("#clhtml-frame").src = "about:blank";
+    try { if (clHtmlUrl) URL.revokeObjectURL(clHtmlUrl); } catch (e) {}
+    clHtmlUrl = null;
+    if (activeCL === "html") activeCL = null;
+  }
+
+  // ---- authentic compile animation (per launcher) --------------------------
+  async function clCompile(cl) {
     inputEnabled = false;
     try {
       out('<span class="green b">:: </span>Retrieving custom launcher sources...');
-      out("Cloning into 'ggr-cl'...");
-      out("remote: Enumerating objects: 512, done.");
-      await progress("Receiving objects", "3.7 MiB", 700);
-      out("Resolving deltas: 100% (318/318), done.");
-      out('<span class="green b">==> </span>Building custom command launcher (ggr-cl)...');
-      out("cc -O2 -pipe -march=native -c ggr_cl.c -o ggr_cl.o");
-      await ggrNinja();
-      out("cc ggr_cl.o loader.o catalog.o -o ggr-cl");
-      out('<span class="green b">==> </span>Installing to /usr/local/bin/ggr-cl');
+      out("Cloning into '" + cl.clone + "'...");
+      out("remote: Enumerating objects: " + cl.objs + ", done.");
+      await progress("Receiving objects", cl.size, 700);
+      out("Resolving deltas: 100% (" + cl.deltas + "/" + cl.deltas + "), done.");
+      out('<span class="green b">==> </span>Building custom command launcher (' + cl.clone + ")...");
+      const obj = cl.src.replace(/\.c$/, ".o");
+      out("cc -O2 -pipe -march=native -c " + cl.src + " -o " + obj);
+      await clNinja(cl);
+      out("cc " + obj + " " + cl.modules.slice(0, 2).map((m) => m + ".o").join(" ") + " -o " + cl.bin);
+      out('<span class="green b">==> </span>Installing to /usr/local/bin/' + cl.bin);
       await sleep(reduceMotion ? 0 : 260);
     } finally { inputEnabled = true; }
   }
-  async function ggrNinja() {
+  async function clNinja(cl) {
     const line = out("");
-    const steps = reduceMotion ? 1 : 18, total = 47;
+    const steps = reduceMotion ? 1 : 18, total = cl.total;
     for (let k = 0; k <= steps; k++) {
       const n = Math.round((k / steps) * total);
-      line.innerHTML = '<span class="green">[' + n + "/" + total + "]</span> Compiling object ggr/" + ["loader", "catalog", "sandbox", "ipc", "proto"][k % 5] + "_" + n + ".c.o";
+      line.innerHTML = '<span class="green">[' + n + "/" + total + "]</span> Compiling object " +
+        cl.id.toLowerCase() + "/" + cl.modules[k % cl.modules.length] + "_" + n + ".c.o";
       scrollDown();
       if (!reduceMotion) await sleep(52);
     }
   }
 
-  function ggrCmdInstall() {
+  // ---- generic install / boot / start / stop -------------------------------
+  function clInstall(id) {
+    const cl = CLS[id];
     out('<span class="warn">installing custom command launchers can result in issues in the terminal</span> <span class="muted">(Y/N)</span>');
     pendingConfirm = async (yes) => {
       if (!yes) { out("aborted."); return; }
-      await ggrCompileAnim("install");
-      ggrInstalled = true; persist();
+      await clCompile(cl);
+      clInstalled[id] = true; persist();
       out("");
-      out('<span class="ok">✔</span> You have now installed GGR type <span class="b">boot GGR cl</span>');
+      out('<span class="ok">✔</span> You have now installed ' + cl.id + ' type <span class="b">boot ' + cl.id + " cl</span>");
     };
   }
-  function ggrCmdBoot() {
-    if (!ggrInstalled) { out('<span class="fail">bash: boot: command not found</span>'); LAST_STATUS = 127; return; }
+  function clBoot(id) {
+    const cl = CLS[id];
+    if (!clInstalled[id]) { out('<span class="fail">bash: boot: command not found</span>'); LAST_STATUS = 127; return; }
     out('<span class="warn">launching Custom launchers can result in issues with the terminal</span> <span class="muted">(Y/N)</span>');
     pendingConfirm = async (yes) => {
       if (!yes) { out("aborted."); return; }
-      out('<span class="arch-b">GGR:</span> Booting');
+      out('<span class="arch-b">' + cl.id + ":</span> Booting");
       inputEnabled = false;
       try {
         for (let i = 0; i < 3; i++) { await sleep(reduceMotion ? 0 : 240); out('<span class="muted">' + "▪".repeat(i + 1) + "</span>"); }
         await sleep(reduceMotion ? 0 : 200);
       } finally { inputEnabled = true; }
-      gameMode = true; persist();
-      out('<span class="ok">✔</span> GGR ready.');
+      clBooted[id] = true; persist();
+      out('<span class="ok">✔</span> ' + cl.id + " ready.");
     };
   }
-  function ggrCmdStart() {
-    if (!gameMode) { out('<span class="fail">Start: command not found</span>'); LAST_STATUS = 127; return; }
-    out('<span class="arch-b">GGR:</span> launching catalog…');
-    ggrOpenCatalog();
+  function clStart(id) {
+    const cl = CLS[id];
+    if (!clBooted[id]) { out('<span class="fail">Start: command not found</span>'); LAST_STATUS = 127; return; }
+    out('<span class="arch-b">' + cl.id + ":</span> " + cl.launchMsg);
+    cl.open();
   }
-  function ggrCmdStop() {
-    if (!gameMode) { out('<span class="fail">Stop: command not found</span>'); LAST_STATUS = 127; return; }
-    ggrCloseCatalog();
-    gameMode = false; persist();
-    out('<span class="muted">Game mode disabled.</span>');
+  function clStop(id) {
+    const cl = CLS[id];
+    if (!clBooted[id]) { out('<span class="fail">Stop: command not found</span>'); LAST_STATUS = 127; return; }
+    cl.close();
+    clBooted[id] = false; persist();
+    out('<span class="muted">' + cl.id + " mode disabled.</span>");
   }
-  // returns true if the line was a hidden GGR command (so it never hits dispatch/help/tab)
+
+  // returns true if the line was a hidden launcher command (never hits dispatch/help/tab)
   async function ggrIntercept(line) {
     const t = line.trim();
-    if (/^install\s+custom\s+cl\s+-GGR$/i.test(t)) { ggrCmdInstall(); return true; }
-    if (/^boot\s+GGR\s+cl$/i.test(t)) { ggrCmdBoot(); return true; }
-    if (/^start\s+GGR$/i.test(t)) { ggrCmdStart(); return true; }
-    if (/^stop\s+GGR$/i.test(t)) { ggrCmdStop(); return true; }
+    let m;
+    if ((m = t.match(/^install\s+custom\s+cl\s+-([A-Za-z0-9_-]+)$/i))) {
+      const id = clResolve(m[1]); if (!id) return false; clInstall(id); return true;
+    }
+    if ((m = t.match(/^boot\s+([A-Za-z0-9_-]+)\s+cl$/i))) {
+      const id = clResolve(m[1]); if (!id) return false; clBoot(id); return true;
+    }
+    if ((m = t.match(/^start\s+([A-Za-z0-9_-]+)$/i))) {
+      const id = clResolve(m[1]); if (!id) return false; clStart(id); return true;
+    }
+    if ((m = t.match(/^stop\s+([A-Za-z0-9_-]+)$/i))) {
+      const id = clResolve(m[1]); if (!id) return false; clStop(id); return true;
+    }
     return false;
   }
+
   function ggrKey(e) {
     if (e.key === "Escape") {
       const player = ggrEl.querySelector("#ggr-player");
       if (player.classList.contains("show")) { ggrClosePlayer(); e.preventDefault(); }
       else { ggrCloseCatalog(); e.preventDefault(); }
     }
+  }
+  // route Escape to whichever launcher overlay is on screen
+  function clKey(e) {
+    if (e.key !== "Escape") return;
+    if (activeCL === "GGR") { ggrKey(e); return; }
+    if (activeCL === "t9os" || activeCL === "gnmath") { clCloseSite(); e.preventDefault(); return; }
+    if (activeCL === "html") { clCloseHtml(); e.preventDefault(); return; }
   }
 
   // ------------------------------------------------------ register new commands
@@ -4884,7 +5054,7 @@ if get_option('buildtype') == 'release'
   // ---- keyboard ----
   function onKey(e) {
     if (booting) { skipBoot(); return; }
-    if (ggrOpen) { ggrKey(e); return; } // game catalog captures keys
+    if (activeCL) { clKey(e); return; } // a custom-launcher overlay captures keys
     if (noctaliaOpen) { nocKey(e); return; } // Noctalia session captures keys
     if (editor.classList.contains("open")) return; // editor handles its own keys
     if (viewer.classList.contains("open")) {
@@ -4963,7 +5133,7 @@ if get_option('buildtype') == 'release'
     const v = kb.value;
     kb.value = "";
     if (booting) { skipBoot(); return; }
-    if (!inputEnabled || editor.classList.contains("open") || noctaliaOpen || ggrOpen) return;
+    if (!inputEnabled || editor.classList.contains("open") || noctaliaOpen || activeCL) return;
     for (const ch of v) {
       buffer = buffer.slice(0, cursorPos) + ch + buffer.slice(cursorPos);
       cursorPos++;
@@ -4972,7 +5142,7 @@ if get_option('buildtype') == 'release'
   });
   screen.addEventListener("click", () => {
     if (booting) { skipBoot(); return; }
-    if (!editor.classList.contains("open") && !viewer.classList.contains("open") && !ggrOpen) focusInput();
+    if (!editor.classList.contains("open") && !viewer.classList.contains("open") && !activeCL) focusInput();
   });
   window.addEventListener("focus", () => { if (inputLine) renderInput(); });
   window.addEventListener("blur", () => { if (inputLine) renderInput(); });
