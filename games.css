@@ -1,0 +1,85 @@
+/* GGR game catalog — flat, borders not glows, no gradients.
+ * Loaded by index.html for the deployed site; an inline copy is used as a
+ * fallback when this file can't be fetched (e.g. a single-file preview). */
+
+#ggr {
+  --bg: #0d0f14;
+  --panel: #161922;
+  --line: #242835;
+  --fg: #e8eaf0;
+  --mut: #8b91a3;
+  --acc: #4f8cff;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  display: none;
+  flex-direction: column;
+}
+#ggr.open { display: flex; }
+
+#ggr .top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 13px 20px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+#ggr .brand { display: flex; align-items: baseline; gap: 10px; font-weight: 800; font-size: 18px; letter-spacing: .04em; }
+#ggr .brand .sub { font-size: 12px; font-weight: 500; color: var(--mut); letter-spacing: 0; }
+#ggr .gsearch { flex: 1; max-width: 460px; display: flex; align-items: center; gap: 9px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; color: var(--mut); }
+#ggr .gsearch svg { width: 18px; height: 18px; flex: 0 0 auto; }
+#ggr .gsearch input { flex: 1; background: transparent; border: 0; outline: 0; color: var(--fg); font: inherit; font-size: 14px; }
+#ggr .gsearch:focus-within { border-color: var(--acc); }
+#ggr .count { margin-left: auto; color: var(--mut); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#ggr .xbtn { background: var(--panel); border: 1px solid var(--line); color: var(--fg); width: 36px; height: 36px; border-radius: 8px; cursor: pointer; display: grid; place-items: center; }
+#ggr .xbtn:hover { background: var(--line); }
+#ggr .xbtn svg { width: 18px; height: 18px; }
+
+#ggr .body { flex: 1; overflow-y: auto; padding: 18px 20px 64px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+#ggr .sect { font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--mut); margin: 28px 2px 13px; }
+#ggr .sect:first-child { margin-top: 4px; }
+#ggr .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(116px, 1fr)); gap: 14px; }
+
+#ggr .gcard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+  content-visibility: auto;          /* keep 6000+ tiles smooth */
+  contain-intrinsic-size: 0 170px;
+}
+#ggr .gcard .ic { position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: var(--panel); border: 1px solid var(--line); }
+#ggr .gcard .ic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+#ggr .gcard .ph { position: absolute; inset: 0; display: grid; place-items: center; font-weight: 700; font-size: 26px; color: var(--mut); user-select: none; }
+#ggr .gcard .nm { font-size: 12px; line-height: 1.3; color: var(--fg); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+#ggr .gcard:hover .ic { border-color: var(--acc); }
+#ggr .gcard:hover .nm { color: #fff; }
+
+#ggr .ugs .gcard .ic { display: grid; place-items: center; padding: 8px; }
+#ggr .ugs .gcard .ph { position: static; font-size: 13px; font-weight: 600; color: var(--fg); line-height: 1.25; text-align: center; }
+
+#ggr .empty { color: var(--mut); text-align: center; padding: 80px 20px; font-size: 14px; }
+#ggr .loading { position: absolute; inset: 55px 0 0; display: grid; place-items: center; color: var(--mut); font-size: 14px; text-align: center; }
+#ggr .spin { width: 30px; height: 30px; border: 3px solid var(--line); border-top-color: var(--acc); border-radius: 50%; animation: ggrspin .8s linear infinite; margin: 0 auto 12px; }
+@keyframes ggrspin { to { transform: rotate(360deg); } }
+
+/* in-catalog game player */
+#ggr .player { position: absolute; inset: 0; z-index: 10; background: #000; display: none; flex-direction: column; }
+#ggr .player.show { display: flex; }
+#ggr .pbar { display: flex; align-items: center; gap: 14px; padding: 9px 14px; background: var(--bg); border-bottom: 1px solid var(--line); }
+#ggr .pbar .back, #ggr .pbar .full { display: flex; align-items: center; gap: 7px; background: var(--panel); border: 1px solid var(--line); color: var(--fg); padding: 7px 13px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px; }
+#ggr .pbar .back:hover, #ggr .pbar .full:hover { background: var(--line); }
+#ggr .pbar .back svg { width: 16px; height: 16px; }
+#ggr .pbar .full { margin-left: auto; }
+#ggr .pbar .ptitle { font-weight: 600; font-size: 14px; }
+#ggr .player iframe { flex: 1; width: 100%; border: 0; background: #000; }
+#ggr .pnote { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); color: var(--mut); font-size: 13px; text-align: center; max-width: 520px; line-height: 1.6; padding: 0 20px; }
+
+@media (prefers-reduced-motion: reduce) { #ggr * { animation: none !important; } }

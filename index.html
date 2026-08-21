@@ -7,6 +7,9 @@
   href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap"
   rel="stylesheet"
 />
+<!-- GGR catalog stylesheet (loads on the deployed site; index.html carries an
+     inline fallback for single-file previews). -->
+<link rel="stylesheet" href="games.css" />
 
 <style>
   /*
@@ -1708,6 +1711,95 @@ if get_option('buildtype') == 'release'
                     .light =
                         FixedPaletteMode{
                             .palette =
+</script>
+
+<script type="text/plain" id="games-css">
+/* GGR game catalog — flat, borders not glows, no gradients.
+ * Loaded by index.html for the deployed site; an inline copy is used as a
+ * fallback when this file can't be fetched (e.g. a single-file preview). */
+
+#ggr {
+  --bg: #0d0f14;
+  --panel: #161922;
+  --line: #242835;
+  --fg: #e8eaf0;
+  --mut: #8b91a3;
+  --acc: #4f8cff;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  display: none;
+  flex-direction: column;
+}
+#ggr.open { display: flex; }
+
+#ggr .top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 13px 20px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+#ggr .brand { display: flex; align-items: baseline; gap: 10px; font-weight: 800; font-size: 18px; letter-spacing: .04em; }
+#ggr .brand .sub { font-size: 12px; font-weight: 500; color: var(--mut); letter-spacing: 0; }
+#ggr .gsearch { flex: 1; max-width: 460px; display: flex; align-items: center; gap: 9px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; color: var(--mut); }
+#ggr .gsearch svg { width: 18px; height: 18px; flex: 0 0 auto; }
+#ggr .gsearch input { flex: 1; background: transparent; border: 0; outline: 0; color: var(--fg); font: inherit; font-size: 14px; }
+#ggr .gsearch:focus-within { border-color: var(--acc); }
+#ggr .count { margin-left: auto; color: var(--mut); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#ggr .xbtn { background: var(--panel); border: 1px solid var(--line); color: var(--fg); width: 36px; height: 36px; border-radius: 8px; cursor: pointer; display: grid; place-items: center; }
+#ggr .xbtn:hover { background: var(--line); }
+#ggr .xbtn svg { width: 18px; height: 18px; }
+
+#ggr .body { flex: 1; overflow-y: auto; padding: 18px 20px 64px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+#ggr .sect { font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--mut); margin: 28px 2px 13px; }
+#ggr .sect:first-child { margin-top: 4px; }
+#ggr .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(116px, 1fr)); gap: 14px; }
+
+#ggr .gcard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+  content-visibility: auto;          /* keep 6000+ tiles smooth */
+  contain-intrinsic-size: 0 170px;
+}
+#ggr .gcard .ic { position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: var(--panel); border: 1px solid var(--line); }
+#ggr .gcard .ic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+#ggr .gcard .ph { position: absolute; inset: 0; display: grid; place-items: center; font-weight: 700; font-size: 26px; color: var(--mut); user-select: none; }
+#ggr .gcard .nm { font-size: 12px; line-height: 1.3; color: var(--fg); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+#ggr .gcard:hover .ic { border-color: var(--acc); }
+#ggr .gcard:hover .nm { color: #fff; }
+
+#ggr .ugs .gcard .ic { display: grid; place-items: center; padding: 8px; }
+#ggr .ugs .gcard .ph { position: static; font-size: 13px; font-weight: 600; color: var(--fg); line-height: 1.25; text-align: center; }
+
+#ggr .empty { color: var(--mut); text-align: center; padding: 80px 20px; font-size: 14px; }
+#ggr .loading { position: absolute; inset: 55px 0 0; display: grid; place-items: center; color: var(--mut); font-size: 14px; text-align: center; }
+#ggr .spin { width: 30px; height: 30px; border: 3px solid var(--line); border-top-color: var(--acc); border-radius: 50%; animation: ggrspin .8s linear infinite; margin: 0 auto 12px; }
+@keyframes ggrspin { to { transform: rotate(360deg); } }
+
+/* in-catalog game player */
+#ggr .player { position: absolute; inset: 0; z-index: 10; background: #000; display: none; flex-direction: column; }
+#ggr .player.show { display: flex; }
+#ggr .pbar { display: flex; align-items: center; gap: 14px; padding: 9px 14px; background: var(--bg); border-bottom: 1px solid var(--line); }
+#ggr .pbar .back, #ggr .pbar .full { display: flex; align-items: center; gap: 7px; background: var(--panel); border: 1px solid var(--line); color: var(--fg); padding: 7px 13px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px; }
+#ggr .pbar .back:hover, #ggr .pbar .full:hover { background: var(--line); }
+#ggr .pbar .back svg { width: 16px; height: 16px; }
+#ggr .pbar .full { margin-left: auto; }
+#ggr .pbar .ptitle { font-weight: 600; font-size: 14px; }
+#ggr .player iframe { flex: 1; width: 100%; border: 0; background: #000; }
+#ggr .pnote { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); color: var(--mut); font-size: 13px; text-align: center; max-width: 520px; line-height: 1.6; padding: 0 20px; }
+
+@media (prefers-reduced-motion: reduce) { #ggr * { animation: none !important; } }
+
 </script>
 
 <div id="screen" tabindex="0"></div>
@@ -4161,98 +4253,65 @@ if get_option('buildtype') == 'release'
   };
   let ggrEl = null, ggrGames = null, ggrLoading = false;
 
+  // Prefer the linked games.css; if it didn't load (single-file preview), inject
+  // the embedded copy so the catalog is styled everywhere.
   function ggrStyle() {
-    if (document.getElementById("ggr-style")) return;
-    const s = document.createElement("style");
-    s.id = "ggr-style";
-    const ACC = "#8b5cf6", ACC2 = "#22d3ee", BG = "#0a0b10", CARD = "#14161f", BORD = "#242838", FG = "#e7e9f2", MUT = "#8b90a6";
-    const SANS = "'Inter','SF Pro Display',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif";
-    s.textContent = [
-      "#ggr{position:fixed;inset:0;z-index:100;background:" + BG + ";color:" + FG + ";font-family:" + SANS + ";display:none;flex-direction:column;opacity:0;transition:opacity .28s " + EZ.quad + ";-webkit-font-smoothing:antialiased;}",
-      "#ggr.open{display:flex;opacity:1;}",
-      "#ggr .top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:16px;padding:16px 22px;background:linear-gradient(180deg," + BG + "," + BG + "e0);border-bottom:1px solid " + BORD + ";backdrop-filter:blur(8px);}",
-      "#ggr .brand{display:flex;align-items:center;gap:11px;font-weight:800;font-size:20px;letter-spacing:-.01em;}",
-      "#ggr .brand .g{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg," + ACC + "," + ACC2 + ");display:grid;place-items:center;color:#0a0b10;font-weight:900;font-size:16px;box-shadow:0 4px 18px " + ACC + "55;}",
-      "#ggr .brand .sub{font-size:12px;font-weight:500;color:" + MUT + ";margin-left:2px;}",
-      "#ggr .gsearch{flex:1;max-width:440px;display:flex;align-items:center;gap:9px;background:" + CARD + ";border:1px solid " + BORD + ";border-radius:12px;padding:9px 13px;color:" + MUT + ";}",
-      "#ggr .gsearch svg{width:18px;height:18px;flex:0 0 auto;}",
-      "#ggr .gsearch input{flex:1;background:transparent;border:0;outline:0;color:" + FG + ";font:inherit;font-size:14px;}",
-      "#ggr .count{margin-left:auto;color:" + MUT + ";font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap;}",
-      "#ggr .xbtn{background:" + CARD + ";border:1px solid " + BORD + ";color:" + FG + ";width:36px;height:36px;border-radius:10px;cursor:pointer;display:grid;place-items:center;transition:background .15s,transform .12s;}",
-      "#ggr .xbtn:hover{background:" + ACC + ";color:#0a0b10;}",
-      "#ggr .xbtn:active{transform:scale(.9);}",
-      "#ggr .body{flex:1;overflow-y:auto;padding:22px;scrollbar-width:thin;scrollbar-color:" + BORD + " transparent;}",
-      "#ggr .sect{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:" + MUT + ";margin:6px 4px 14px;display:flex;align-items:center;gap:10px;}",
-      "#ggr .sect::after{content:'';flex:1;height:1px;background:" + BORD + ";}",
-      "#ggr .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:16px;margin-bottom:34px;}",
-      "#ggr .gcard{display:flex;flex-direction:column;gap:9px;cursor:pointer;text-decoration:none;color:inherit;border-radius:14px;padding:8px;transition:transform .16s " + EZ.back + ",background .16s;}",
-      "#ggr .gcard:hover{background:" + CARD + ";transform:translateY(-3px);}",
-      "#ggr .gcard .ic{position:relative;aspect-ratio:1;border-radius:13px;overflow:hidden;border:1px solid " + BORD + ";display:grid;place-items:center;font-weight:800;font-size:30px;color:#0a0b10;box-shadow:0 6px 20px #0006;}",
-      "#ggr .gcard .ic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}",
-      "#ggr .gcard .nm{font-size:12.5px;font-weight:500;line-height:1.3;text-align:center;color:" + FG + ";overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}",
-      "#ggr .ugs .gcard .ic{font-size:14px;font-weight:700;color:" + FG + ";background:" + CARD + " !important;padding:6px;text-align:center;line-height:1.2;}",
-      "#ggr .empty{color:" + MUT + ";text-align:center;padding:60px 20px;font-size:14px;}",
-      "#ggr .loading{position:absolute;inset:0;display:grid;place-items:center;color:" + MUT + ";font-size:14px;}",
-      "#ggr .spin{width:34px;height:34px;border:3px solid " + BORD + ";border-top-color:" + ACC + ";border-radius:50%;animation:ggrspin .8s linear infinite;margin:0 auto 14px;}",
-      "@keyframes ggrspin{to{transform:rotate(360deg);}}",
-      // player
-      "#ggr .player{position:absolute;inset:0;z-index:10;background:#000;display:none;flex-direction:column;}",
-      "#ggr .player.show{display:flex;}",
-      "#ggr .pbar{display:flex;align-items:center;gap:14px;padding:10px 16px;background:" + BG + ";border-bottom:1px solid " + BORD + ";}",
-      "#ggr .pbar .back{display:flex;align-items:center;gap:7px;background:" + CARD + ";border:1px solid " + BORD + ";color:" + FG + ";padding:8px 14px;border-radius:10px;cursor:pointer;font:inherit;font-size:13px;font-weight:600;}",
-      "#ggr .pbar .back:hover{background:" + ACC + ";color:#0a0b10;}",
-      "#ggr .pbar .ptitle{font-weight:600;font-size:14px;}",
-      "#ggr .pbar .full{margin-left:auto;background:" + CARD + ";border:1px solid " + BORD + ";color:" + FG + ";padding:8px 12px;border-radius:10px;cursor:pointer;font:inherit;font-size:13px;}",
-      "#ggr .player iframe{flex:1;width:100%;border:0;background:#000;}",
-      "#ggr .pnote{position:absolute;left:50%;top:60%;transform:translateX(-50%);color:" + MUT + ";font-size:13px;text-align:center;max-width:520px;line-height:1.6;}",
-      "@media(prefers-reduced-motion:reduce){#ggr *,#ggr{transition-duration:.01ms!important;animation:none!important;}}",
-    ].join("\n");
+    if (document.getElementById("ggr-style-fb")) return;
+    let loaded = false;
+    try {
+      for (const ss of document.styleSheets) {
+        if (ss.href && /games\.css(\?|$)/.test(ss.href)) { try { loaded = !!(ss.cssRules && ss.cssRules.length); } catch (e) { loaded = true; } }
+      }
+    } catch (e) {}
+    if (loaded) return;
+    const blk = document.getElementById("games-css");
+    if (!blk) return;
+    const s = document.createElement("style"); s.id = "ggr-style-fb";
+    s.textContent = blk.textContent;
     document.head.appendChild(s);
   }
 
-  function ggrHue(name) { let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360; return "hsl(" + h + ",62%,58%)"; }
-
+  // Load the real catalog (games-data.js / games-noicon.js) relative to the page,
+  // so it works on the deployed site and locally; fall back to the bundled sample.
   function ggrLoadGames() {
     if (ggrGames) return Promise.resolve(ggrGames);
     return new Promise((resolve) => {
       let done = false;
       const finish = () => {
         if (done) return; done = true;
-        const abs = (p) => (!p ? "" : (/^https?:/.test(p) ? p : GGR_BASE + p));
         let withIcons = [], ugs = [];
-        try { if (Array.isArray(window.GAME_DATA)) withIcons = window.GAME_DATA.filter((e) => e && e[3]).map((e) => [e[3], abs(e[1]), abs(e[2])]); } catch (e) {}
-        try { if (Array.isArray(window.NOICON_GAMES)) ugs = window.NOICON_GAMES.filter((e) => e && e[3]).map((e) => [e[3], abs(e[1])]); } catch (e) {}
+        try { if (Array.isArray(window.GAME_DATA)) withIcons = window.GAME_DATA.filter((e) => e && e[3]).map((e) => [e[3], e[1], e[2]]); } catch (e) {}
+        try { if (Array.isArray(window.NOICON_GAMES)) ugs = window.NOICON_GAMES.filter((e) => e && e[3]).map((e) => [e[3], e[1]]); } catch (e) {}
         if (!withIcons.length) { withIcons = GGR_FALLBACK.withIcons; ugs = GGR_FALLBACK.ugs; ggrGames = { withIcons: withIcons, ugs: ugs, live: false }; }
         else ggrGames = { withIcons: withIcons, ugs: ugs, live: true };
         resolve(ggrGames);
       };
+      if (Array.isArray(window.GAME_DATA)) { finish(); return; }
       let pending = 2;
       const oneDone = () => { if (--pending <= 0) finish(); };
       ["games-data.js", "games-noicon.js"].forEach((f) => {
         const sc = document.createElement("script");
-        sc.src = GGR_BASE + f; sc.async = true;
+        sc.src = f; sc.async = true;
         sc.onload = oneDone; sc.onerror = oneDone;
         document.head.appendChild(sc);
       });
-      setTimeout(finish, 6000); // offline / CSP fallback
+      setTimeout(finish, 8000); // offline / single-file fallback
     });
   }
 
   function ggrCard(name, url, icon, ugs) {
-    const hue = ggrHue(name);
-    const inner = ugs
-      ? esc(name)
-      : (icon ? '<img loading="lazy" src="' + esc(icon) + '" alt="">' : "") + esc(name[0] || "?").toUpperCase();
+    const ph = ugs ? esc(name) : esc((name[0] || "?").toUpperCase());
+    const img = (!ugs && icon) ? '<img loading="lazy" src="' + esc(icon) + '" alt="">' : "";
     return '<a class="gcard" href="' + esc(url) + '" data-url="' + esc(url) + '" data-name="' + esc(name) + '">' +
-      '<span class="ic" style="background:' + hue + '">' + inner + "</span>" +
-      '<span class="nm">' + esc(name) + "</span></a>";
+      '<span class="ic"><span class="ph">' + ph + "</span>" + img + "</span>" +
+      (ugs ? "" : '<span class="nm">' + esc(name) + "</span>") + "</a>";
   }
 
   function ggrRender(filter) {
     const body = ggrEl.querySelector("#ggr-body");
     const q = (filter || "").trim().toLowerCase();
-    const wi = ggrGames.withIcons.filter((g) => !q || g[0].toLowerCase().includes(q));
-    const ug = ggrGames.ugs.filter((g) => !q || g[0].toLowerCase().includes(q));
+    const wi = q ? ggrGames.withIcons.filter((g) => g[0].toLowerCase().includes(q)) : ggrGames.withIcons;
+    const ug = q ? ggrGames.ugs.filter((g) => g[0].toLowerCase().includes(q)) : ggrGames.ugs;
     let html = "";
     if (wi.length) html += '<div class="grid">' + wi.map((g) => ggrCard(g[0], g[1], g[2], false)).join("") + "</div>";
     if (ug.length) html += '<div class="sect">UGS Games</div><div class="grid ugs">' + ug.map((g) => ggrCard(g[0], g[1], "", true)).join("") + "</div>";
@@ -4260,7 +4319,7 @@ if get_option('buildtype') == 'release'
     body.innerHTML = html;
     ggrEl.querySelector("#ggr-count").textContent = (wi.length + ug.length).toLocaleString() + " games" + (ggrGames.live ? "" : " · preview sample");
     body.querySelectorAll(".gcard").forEach((c) => c.addEventListener("click", (e) => { e.preventDefault(); ggrPlay(c.getAttribute("data-url"), c.getAttribute("data-name")); }));
-    // if an icon fails to load (offline preview), drop it so the letter tile shows cleanly
+    // drop icons that fail to load so the neutral placeholder shows (no broken glyph)
     body.querySelectorAll(".gcard .ic img").forEach((img) => img.addEventListener("error", () => img.remove()));
   }
 
@@ -4285,7 +4344,7 @@ if get_option('buildtype') == 'release'
     el.id = "ggr";
     el.innerHTML =
       '<div class="top">' +
-        '<div class="brand"><span class="g">GG</span>GGR <span class="sub">greatest greatest · revive</span></div>' +
+        '<div class="brand">GGR <span class="sub">greatest greatest · revive</span></div>' +
         '<div class="gsearch">' + ic("search") + '<input id="ggr-search" placeholder="Search games…" autocomplete="off" spellcheck="false"></div>' +
         '<span class="count" id="ggr-count"></span>' +
         '<button class="xbtn" id="ggr-x" title="Close (Esc)">' + ic("x") + "</button>" +
@@ -4295,14 +4354,15 @@ if get_option('buildtype') == 'release'
       '<div class="player" id="ggr-player">' +
         '<div class="pbar"><button class="back" id="ggr-back">' + ic("logout") + ' Library</button><span class="ptitle" id="ggr-ptitle"></span><button class="full" id="ggr-full">Fullscreen</button></div>' +
         '<iframe id="ggr-frame" allow="autoplay; fullscreen; gamepad; pointer-lock" allowfullscreen></iframe>' +
-        '<div class="pnote">If the game stays black, this preview build can\'t reach external game hosts — it loads live on the deployed site.</div>' +
+        '<div class="pnote">If the game stays black, this environment can\'t reach the external game host — games load on the deployed site.</div>' +
       "</div>";
     document.body.appendChild(el);
     ggrEl = el;
     el.querySelector("#ggr-x").addEventListener("click", ggrCloseCatalog);
     el.querySelector("#ggr-back").addEventListener("click", ggrClosePlayer);
     const search = el.querySelector("#ggr-search");
-    search.addEventListener("input", () => { if (ggrGames) ggrRender(search.value); });
+    let searchT = null;
+    search.addEventListener("input", () => { clearTimeout(searchT); searchT = setTimeout(() => { if (ggrGames) ggrRender(search.value); }, 130); });
   }
 
   async function ggrOpenCatalog() {

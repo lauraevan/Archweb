@@ -1,11 +1,43 @@
 # Arch Linux WebTTY
 
 A faithful, in-browser recreation of an Arch Linux console — boot to shell to a full
-desktop shell — in a single self-contained `index.html`. Full-black TTY, white text,
-no build step, no dependencies. Open the file (or serve it) and it boots. Your changes
-persist across reloads (localStorage).
+desktop shell. Full-black TTY, white text. Open `index.html` (or serve the folder) and
+it boots. Your changes persist across reloads (localStorage).
 
 ![Arch Linux WebTTY](https://img.shields.io/badge/Arch-WebTTY-1793D1)
+
+## Project layout
+
+A real multi-file web project — HTML, CSS, JavaScript and Python:
+
+```
+index.html        the TTY, boot, shell, editor, Noctalia session   (HTML + JS + inline CSS)
+games.css         flat catalog stylesheet                          (CSS)
+games-data.js     window.GAME_DATA    — 6082 games with cover art  (generated JS)
+games-noicon.js   window.NOICON_GAMES — 407 UGS name-tile games    (generated JS)
+tools/build_games.py   generates the two catalog files from tools/sources/  (Python)
+tools/serve.py         static dev server that mirrors production           (Python)
+```
+
+Regenerate the catalog data and serve it locally:
+
+```sh
+python3 tools/build_games.py     # -> games-data.js, games-noicon.js
+python3 tools/serve.py           # -> http://localhost:8000/
+```
+
+## Deploy (githack)
+
+The site is plain static files, so any static host works. To serve it straight from
+this repo with correct content-types, open the file through **githack**:
+
+```
+https://raw.githack.com/lauraevan/archweb/<branch>/index.html
+```
+
+The catalog's `games-data.js` / `games-noicon.js` load relatively, and cover art loads
+from the games repository, so the full catalog renders on the deployed URL. (A single
+self-contained preview that can't fetch those files falls back to a small sample.)
 
 ## What makes it real
 
